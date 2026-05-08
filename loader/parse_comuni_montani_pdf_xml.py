@@ -65,6 +65,9 @@ def extract_rows(root: ET.Element) -> list[tuple[str, str]]:
     page_tag = f"{{{ns}}}page" if ns else "page"
     text_tag = f"{{{ns}}}text" if ns else "text"
 
+    # Newer PDF layouts embed SIGLA + COMUNE on the same row.
+    direct_pairs: list[tuple[str, str]] = []
+
     meta: list[str] = []
     comuni: list[str] = []
 
@@ -72,6 +75,25 @@ def extract_rows(root: ET.Element) -> list[tuple[str, str]]:
         by_top = _group_page(page, text_tag)
         kind = _classify_page(by_top)
         tops = sorted(by_top, key=lambda x: int(x))
+        # First try: extract pairs directly from any "tabular" row.
+        # Example parts: ["1","Abruzzo","Chieti","CH","Bomba"]
+        for top in tops:
+            row = sorted(by_top[top], key=lambda x: x[0])
+            parts = [t for _, t in row]
+            if not parts or parts[0] == "Numero":
+                continue
+            if not re.fullmatch(r"\d+", parts[0].strip()):
+                continue
+            sigla_idx = None
+            for i, p in enumerate(parts):
+                if _norm_sigla(p):
+                    sigla_idx = i
+            if sigla_idx is not None and sigla_idx < len(parts) - 1:
+                sigla = parts[sigla_idx].strip().upper()
+                comune = " ".join(x.strip() for x in parts[sigla_idx + 1 :] if x.strip())
+                if comune and comune.upper() != "COMUNE":
+                    direct_pairs.append((sigla, comune))
+
         if kind == "meta":
             for top in tops:
                 row = sorted(by_top[top], key=lambda x: x[0])
@@ -96,6 +118,13 @@ def extract_rows(root: ET.Element) -> list[tuple[str, str]]:
                 if int(top) > 1100 and re.fullmatch(r"\d+\s*", txt):
                     continue
                 comuni.append(txt)
+
+    if direct_pairs:
+        uniq: dict[tuple[str, str], None] = {}
+        for sigla, comune in direct_pairs:
+            uniq[sigla.strip().upper(), comune.strip()] = None
+        rows = sorted(uniq.keys(), key=lambda x: (x[0], x[1].lower()))
+        return rows
 
     if len(meta) != len(comuni):
         print(

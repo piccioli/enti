@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import re
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -88,8 +89,21 @@ def _download(url: str, out_path: Path) -> None:
         headers={"User-Agent": "WEBMAPP municipalities loader (IPA download)"},
         method="GET",
     )
-    with urllib.request.urlopen(req, timeout=60) as r, out_path.open("wb") as f:
-        f.write(r.read())
+    # Alcuni endpoint IPA possono chiudere la connessione: scarica in streaming con retry.
+    for attempt in range(1, 6):
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r, out_path.open("wb") as f:
+                while True:
+                    chunk = r.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            if out_path.exists() and out_path.stat().st_size > 0:
+                return
+        except Exception as e:
+            if attempt >= 5:
+                raise
+            time.sleep(2 * attempt)
 
 
 def _score_uo(desc: str) -> int:
