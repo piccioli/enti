@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIR}"
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "ERROR: comando richiesto non trovato: $1" >&2
+    exit 1
+  }
+}
+
+need_cmd docker
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE=(docker-compose)
+else
+  echo "ERROR: Docker Compose non trovato (usa 'docker compose' o 'docker-compose')." >&2
+  exit 1
+fi
+
+prompt() {
+  local var="$1"
+  local label="$2"
+  local def="${3:-}"
+  local val=""
+  if [ -n "${def}" ]; then
+    read -r -p "${label} [${def}]: " val
+    val="${val:-${def}}"
+  else
+    read -r -p "${label}: " val
+  fi
+  printf '%s' "${val}"
+}
+
+prompt_bool01() {
+  local label="$1"
+  local def="${2:-0}"
+  local val=""
+  while true; do
+    val="$(prompt _ "${label} (0/1)" "${def}")"
+    case "${val}" in
+      0|1) printf '%s' "${val}"; return 0 ;;
+    esac
+    echo "Valore non valido. Inserisci 0 oppure 1." >&2
+  done
+}
+
+echo "=== Installazione Webmapp Comuni CRM ==="
+echo "Directory: ${ROOT_DIR}"
+echo ""
+
+ENV_FILE="${ROOT_DIR}/.env"
+if [ -f "${ENV_FILE}" ]; then
+  ts="$(date +%Y%m%d-%H%M%S)"
+  cp -f "${ENV_FILE}" "${ENV_FILE}.bak.${ts}"
+  echo "Trovato .env esistente → backup: .env.bak.${ts}"
+fi
+
+POSTGRES_PASSWORD="$(prompt POSTGRES_PASSWORD "POSTGRES_PASSWORD (obbligatoria)" "")"
+if [ -z "${POSTGRES_PASSWORD}" ]; then
+  echo "ERROR: POSTGRES_PASSWORD non può essere vuota." >&2
+  exit 1
+fi
+
+ISTAT_YEAR="$(prompt ISTAT_YEAR "ISTAT_YEAR" "2026")"
+WEB_PORT="$(prompt WEB_PORT "WEB_PORT (porta pubblica web)" "8080")"
+CURL_INSECURE="$(prompt_bool01 "CURL_INSECURE (disabilita verifica SSL per download)" "0")"
+
+echo ""
+echo "— Opzioni dati —"
+ISTAT_POP_YEAR="$(prompt ISTAT_POP_YEAR "ISTAT_POP_YEAR (vuoto = default demo POS)" "")"
+SKIP_ISTAT_POP="$(prompt_bool01 "SKIP_ISTAT_POP" "0")"
+ISTAT_ALTIMETRIA_XLS_URL="$(prompt ISTAT_ALTIMETRIA_XLS_URL "ISTAT_ALTIMETRIA_XLS_URL (vuoto = default ISTAT)" "")"
+SKIP_ISTAT_ALTIMETRIA="$(prompt_bool01 "SKIP_ISTAT_ALTIMETRIA" "0")"
+
+COMUNI_MONTANI_L131_PDF="$(prompt COMUNI_MONTANI_L131_PDF "COMUNI_MONTANI_L131_PDF (path container, es. /data/file.pdf; vuoto = usa URL)" "")"
+COMUNI_MONTANI_L131_PDF_URL="$(prompt COMUNI_MONTANI_L131_PDF_URL "COMUNI_MONTANI_L131_PDF_URL (vuoto = default nello script)" "")"
+SKIP_COMUNI_MONTANI_L131="$(prompt_bool01 "SKIP_COMUNI_MONTANI_L131" "0")"
+
+COMUNI_CONTATTI_CSV="$(prompt COMUNI_CONTATTI_CSV "COMUNI_CONTATTI_CSV (path container, es. /data/contatti-comuni.csv; vuoto = nessun import)" "")"
+SKIP_COMUNI_CONTATTI="$(prompt_bool01 "SKIP_COMUNI_CONTATTI" "0")"
+
+GEN_IPA="$(prompt_bool01 "Vuoi generare automaticamente contatti-comuni.csv da IPA adesso?" "1")"
+
+{
+  echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
+  echo "ISTAT_YEAR=${ISTAT_YEAR}"
+  [ -n "${ISTAT_POP_YEAR}" ] && echo "ISTAT_POP_YEAR=${ISTAT_POP_YEAR}"
+  echo "SKIP_ISTAT_POP=${SKIP_ISTAT_POP}"
+  [ -n "${ISTAT_ALTIMETRIA_XLS_URL}" ] && echo "ISTAT_ALTIMETRIA_XLS_URL=${ISTAT_ALTIMETRIA_XLS_URL}"
+  echo "SKIP_ISTAT_ALTIMETRIA=${SKIP_ISTAT_ALTIMETRIA}"
+  echo "WEB_PORT=${WEB_PORT}"
+  echo "CURL_INSECURE=${CURL_INSECURE}"
+
+  [ -n "${COMUNI_MONTANI_L131_PDF}" ] && echo "COMUNI_MONTANI_L131_PDF=${COMUNI_MONTANI_L131_PDF}"
+  [ -n "${COMUNI_MONTANI_L131_PDF_URL}" ] && echo "COMUNI_MONTANI_L131_PDF_URL=${COMUNI_MONTANI_L131_PDF_URL}"
+  echo "SKIP_COMUNI_MONTANI_L131=${SKIP_COMUNI_MONTANI_L131}"
+
+  [ -n "${COMUNI_CONTATTI_CSV}" ] && echo "COMUNI_CONTATTI_CSV=${COMUNI_CONTATTI_CSV}"
+  echo "SKIP_COMUNI_CONTATTI=${SKIP_COMUNI_CONTATTI}"
+} > "${ENV_FILE}"
+
+echo ""
+echo "Scritto ${ENV_FILE}"
+echo ""
+
+echo "=== Build immagini ==="
+"${COMPOSE[@]}" build
+
+echo ""
+echo "=== Avvio servizi principali (db, api, web) ==="
+"${COMPOSE[@]}" up -d db api web
+
+echo ""
+echo "=== Primo caricamento dati (loader one-shot) ==="
+"${COMPOSE[@]}" run --rm loader
+
+if [ "${GEN_IPA}" = "1" ]; then
+  echo ""
+  echo "=== Generazione contatti comuni da IPA → data/contatti-comuni.csv ==="
+  # richiede /data scrivibile (compose monta ./data:/data)
+  "${COMPOSE[@]}" run --rm loader bash -lc 'bash /loader/build_contatti_comuni_from_ipa.sh'
+  echo ""
+  echo "=== Import contatti nel DB ==="
+  "${COMPOSE[@]}" run --rm loader bash -lc 'source /loader/load_contatti_comuni.sh && load_contatti_comuni_main'
+fi
+
+echo ""
+echo "=== OK ==="
+echo "Apri: http://localhost:${WEB_PORT}"
+echo ""
+echo "Note produzione: metti un reverse proxy TLS davanti alla porta ${WEB_PORT}."
+

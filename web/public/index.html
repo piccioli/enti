@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Comuni d'Italia — Webmapp</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <p id="loading-msg">Caricamento dati...</p>
+</div>
+
+<header>
+  <h1>Comuni d'<span>Italia</span></h1>
+  <div id="loader-status">
+    <div class="dot loading" id="db-dot"></div>
+    <span id="db-label">Connessione...</span>
+  </div>
+  <div id="stats"></div>
+</header>
+
+<main>
+  <aside id="sidebar">
+    <div id="filters">
+      <div class="filter-row">
+        <select id="sel-reg">
+          <option value="">— Tutte le Regioni —</option>
+        </select>
+        <select id="sel-prov" disabled>
+          <option value="">— Tutte le Province —</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <input id="search-input" type="text" placeholder="Cerca comune..." autocomplete="off" />
+        <button class="btn-reset" id="btn-reset" title="Azzera filtri">✕ Reset</button>
+      </div>
+      <div class="filter-row filter-row-inline">
+        <label class="filter-checkbox"><input id="chk-montano-l131" type="checkbox" /> Solo comuni montani (L.&nbsp;131/2025)</label>
+      </div>
+      <div class="filter-row filter-row-inline">
+        <label class="filter-checkbox"><input id="chk-has-contacts" type="checkbox" /> Solo comuni con contatti (IPA)</label>
+      </div>
+
+      <div class="group-panel">
+        <span class="group-panel-title">Raggruppamento</span>
+        <div class="filter-row">
+          <select id="sel-group-kind" aria-label="Tipo di raggruppamento">
+            <option value="">Tutti i tipi</option>
+          </select>
+          <select id="sel-group" aria-label="Raggruppamento">
+            <option value="">— Nessuno —</option>
+          </select>
+        </div>
+        <p id="group-detail" class="group-detail empty">Seleziona un raggruppamento per visualizzarlo in mappa.</p>
+      </div>
+    </div>
+
+    <div id="result-bar">
+      <span id="result-count">—</span>
+      <span id="result-hint">Seleziona una regione per vedere i comuni sulla mappa</span>
+    </div>
+
+    <div id="export-bar" class="export-bar">
+      <span id="sel-count" class="sel-count">0 selezionati</span>
+      <div class="export-actions">
+        <button class="btn-export" id="btn-export-png" disabled>Scarica immagine</button>
+        <button class="btn-export" id="btn-export-pdf" disabled>Scarica PDF</button>
+      </div>
+    </div>
+
+    <div id="table-area">
+      <table>
+        <thead>
+          <tr>
+            <th class="col-check"><input id="chk-all" type="checkbox" aria-label="Seleziona tutti" /></th>
+            <th>Comune</th>
+            <th>Prov</th>
+            <th>Regione</th>
+            <th class="num">Abitanti</th>
+            <th class="num" title="Quota media sul territorio (m s.l.m., ISTAT–DEM Ispra). Passa sul valore per min/max.">Quota</th>
+            <th class="num col-l131" title="Comune montano ai sensi della L. 131/2025 (elenco ministeriale)">L.&nbsp;131</th>
+            <th class="col-pec" title="PEC presente (dati open data IPA/AgID)">PEC</th>
+            <th class="col-info" title="Almeno un contatto/CF/indirizzo valorizzato (IPA)">Info</th>
+            <th>Cod. ISTAT</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div id="empty-state" class="empty-state hidden">Nessun comune trovato.</div>
+    </div>
+
+    <div id="pagination"></div>
+  </aside>
+
+  <div id="sidebar-resizer"
+       class="sidebar-resizer"
+       role="separator"
+       aria-orientation="vertical"
+       aria-label="Ridimensiona pannello laterale"
+       title="Trascina per modificare la larghezza · doppio clic per ripristinare · frecce con focus"
+       tabindex="0"></div>
+
+  <div id="map"></div>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

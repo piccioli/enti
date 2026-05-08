@@ -1,0 +1,102 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: comuni
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d comuni"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  loader:
+    build: ./loader
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: comuni
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      ISTAT_YEAR: ${ISTAT_YEAR:-2026}
+      # Anno DEMO ISTAT (popolazione al 1° gennaio). Vuoto = massimo anno selezionato dalla pagina POS.
+      ISTAT_POP_YEAR: ${ISTAT_POP_YEAR:-}
+      # 1 = non scaricare/aggiornare la tabella dalla demo ISTAT dopo i confini
+      SKIP_ISTAT_POP: ${SKIP_ISTAT_POP:-0}
+      # URL foglio XLSX «Altimetria comuni» (default: ISTAT, rif. 31/12/2021)
+      ISTAT_ALTIMETRIA_XLS_URL: ${ISTAT_ALTIMETRIA_XLS_URL:-}
+      SKIP_ISTAT_ALTIMETRIA: ${SKIP_ISTAT_ALTIMETRIA:-0}
+      # PDF elenco «comuni montani» L.131/2025 (path nel container, es. /data/elenco.pdf)
+      COMUNI_MONTANI_L131_PDF: ${COMUNI_MONTANI_L131_PDF:-}
+      COMUNI_MONTANI_L131_PDF_URL: ${COMUNI_MONTANI_L131_PDF_URL:-}
+      SKIP_COMUNI_MONTANI_L131: ${SKIP_COMUNI_MONTANI_L131:-0}
+      # CSV contatti/fiscali comuni (path nel container, es. /data/contatti-comuni.csv)
+      COMUNI_CONTATTI_CSV: ${COMUNI_CONTATTI_CSV:-}
+      SKIP_COMUNI_CONTATTI: ${SKIP_COMUNI_CONTATTI:-0}
+      CURL_INSECURE: ${CURL_INSECURE:-0}
+    volumes:
+      - ./data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: comuni
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    build: ./web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:

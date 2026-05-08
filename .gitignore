@@ -1,0 +1,17 @@
+.env
+.env.*
+.DS_Store
+.claude/
+node_modules/
+*.zip
+*.shp
+*.dbf
+*.shx
+*.prj
+*.cpg
+*.qmd
+/tmp/
+__pycache__/
+*.pyc
+data/*
+!data/.gitkeep
