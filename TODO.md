@@ -107,6 +107,15 @@ https://api.webmapp.it/tiles/14/8640/5923.png) e aggiungere altri layer selezion
 - **Statistiche Parchi e aree protette**: Dashboard con grafici e mappe che rappresentano le principali statistiche presenti nel database relative ai parchi e alle aree protette
 - **Funionalità Download PDF**: tutte le singole pagine di statistiche devono avere la possibilità di scaricare la visualizzazione a schermo in formato PDF
 
+## 8. Revisione dati territoriali
+
+- **Rivedere i tipi di raggruppamento**: rimuovere i raggruppamenti che non hanno dati
+- **Comunità Montane**: Recuperare i dati sulle Comunità montane
+
+---
+
+# DONE
+
 ## 8. Copyrights / Software INFO ecc.
 
 - **Aggiungere licenza MIT**: includere il testo della licenza MIT del software nel repository e renderla consultabile dall’app.
@@ -116,11 +125,6 @@ https://api.webmapp.it/tiles/14/8640/5923.png) e aggiungere altri layer selezion
 - **Changelog**: introdurre e mantenere un `CHANGELOG.md` (formato tipo “Keep a Changelog”) e collegarlo dalle “Info software” (link “Changelog” o note dell’ultima release).
 - **Info nel popup**: nel popup “Info software” mostrare almeno licenza, versione attuale e link a eventuali note di rilascio.
 - **Variabile di ambiente**: aggiungere/mostrare un indicatore dell’ambiente attivo (es. `DEV` / `PROD`) nelle “Info software”.
-
-
----
-
-# DONE
 
 ## 1. Dati — enti territoriali e aggregazioni comuni (Italia)
 
