@@ -85,6 +85,29 @@ PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PG
   -v ON_ERROR_STOP=1 -f /loader/post_load.sql
 
 echo "[4/4] Import territorial_groups + members ..."
+echo "[4a] Ensure territorial_groups metadata columns exist ..."
+PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PGUSER}" -d "${PGDATABASE}" -v ON_ERROR_STOP=1 <<'SQL'
+ALTER TABLE territorial_groups
+  ADD COLUMN IF NOT EXISTS source_name TEXT,
+  ADD COLUMN IF NOT EXISTS source_url TEXT,
+  ADD COLUMN IF NOT EXISTS reference_year SMALLINT,
+  ADD COLUMN IF NOT EXISTS external_id TEXT,
+  ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT false;
+
+CREATE UNIQUE INDEX IF NOT EXISTS territorial_groups_source_external_unique
+  ON territorial_groups (source_name, external_id)
+  WHERE source_name IS NOT NULL AND btrim(external_id) <> '';
+
+CREATE INDEX IF NOT EXISTS territorial_groups_demo_idx
+  ON territorial_groups (is_demo)
+  WHERE is_demo;
+
+CREATE INDEX IF NOT EXISTS territorial_groups_fts_it_idx
+  ON territorial_groups USING gin (
+    (to_tsvector('italian', coalesce(label, '') || ' ' || coalesce(slug, '')))
+  );
+SQL
+
 G_COUNT="$(jq '.groups | length' "${TG}")"
 M_COUNT="$(jq '.members | length' "${TG}")"
 

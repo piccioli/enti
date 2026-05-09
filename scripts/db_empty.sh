@@ -21,6 +21,21 @@ usage() {
   echo "USAGE: $(basename "$0") [--nuke-volume | --volume | --import-and-deploy [percorso_datapack]]" >&2
 }
 
+apply_migrations() {
+  echo "=== Applica migrations (db/migrations/*.sql) sul container db ==="
+  docker compose up -d db >/dev/null
+  until docker compose exec -T db pg_isready -U postgres -d comuni >/dev/null 2>&1; do sleep 2; done
+
+  local m
+  shopt -s nullglob
+  for m in "${ROOT_DIR}/db/migrations/"*.sql; do
+    echo "--- migration: $(basename "${m}")"
+    docker compose exec -T db psql -U postgres -d comuni -v ON_ERROR_STOP=1 < "${m}"
+  done
+  shopt -u nullglob
+  echo "OK: migrations applicate."
+}
+
 do_clean_tables() {
   echo "=== Svuota tabelle (solo dati) via psql nel container db ==="
   docker compose up -d db >/dev/null
@@ -53,6 +68,7 @@ case "${1:-}" in
       exit 1
     fi
     do_clean_tables
+    apply_migrations
     echo "=== datapack_import ==="
     if [[ -n "${2:-}" ]]; then
       bash "${ROOT_DIR}/scripts/datapack_import.sh" "$2"
