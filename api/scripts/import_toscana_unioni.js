@@ -16,16 +16,18 @@
  */
 
 const db = require('../src/db');
+const fs = require('fs').promises;
 
 const DEFAULT_URL =
   'https://dati.toscana.it/dataset/c8165a9a-28ac-4eff-9510-4d7599c9be16/resource/11acaf1a-98ed-4ca5-99ce-0193457c66e0/download/comuni-toscana-con-funzione-statistica-associata-per-statuto_agg-1gen24.csv';
 
 function parseArgs(argv) {
-  const out = { url: DEFAULT_URL, append: false };
+  const out = { url: DEFAULT_URL, file: '', append: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--append') out.append = true;
     else if (a === '--url') out.url = argv[++i];
+    else if (a === '--file') out.file = argv[++i];
   }
   return out;
 }
@@ -139,9 +141,15 @@ async function appendMembers(client, groupId, proComs) {
 }
 
 async function main() {
-  const { url, append } = parseArgs(process.argv);
-  console.log(`Downloading Toscana CSV: ${url}`);
-  const text = await fetchText(url);
+  const { url, file, append } = parseArgs(process.argv);
+  let text = '';
+  if (file) {
+    console.log(`Reading Toscana CSV from file: ${file}`);
+    text = await fs.readFile(file, 'utf8');
+  } else {
+    console.log(`Downloading Toscana CSV: ${url}`);
+    text = await fetchText(url);
+  }
 
   const lines = text.split(/\r?\n/).filter(Boolean);
   if (lines.length < 2) throw new Error('CSV vuoto o non valido');

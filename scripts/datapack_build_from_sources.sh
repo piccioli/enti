@@ -17,16 +17,28 @@ mkdir -p "${OUT}"
 
 echo "=== Ricostruzione datapack dagli scrape ISTAT (load.sh --force in container) → ${OUT} ==="
 
-# L'immagine loader deve includere export_datapack.sh (se vedi "No such file" era una build vecchia in cache).
-docker compose build loader
+# Le immagini devono includere gli ultimi script (evita cache vecchie).
+docker compose build loader api
 
-docker compose up -d db >/dev/null
+docker compose up -d db api >/dev/null
 
 until docker compose exec -T db pg_isready -U postgres -d comuni >/dev/null 2>&1; do
   sleep 2
 done
 
 docker compose run --rm loader bash load.sh --force
+
+echo "=== Import raggruppamenti nazionali (città metropolitane) ==="
+docker compose exec -T api node scripts/import_italy_metropolitan_cities.js
+
+if [[ -f "${ROOT_DIR}/data/toscana-unioni-2024-01-01.csv" ]]; then
+  echo "=== Import Toscana (unioni) da CSV locale ==="
+  docker compose run --rm \
+    -v "${ROOT_DIR}/data:/data:ro" \
+    api node scripts/import_toscana_unioni.js --file /data/toscana-unioni-2024-01-01.csv
+else
+  echo "=== Skip import Toscana: CSV locale non trovato in data/ ==="
+fi
 
 docker compose run --rm \
   -e DATAPACK_DIR=/datapack \
