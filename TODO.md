@@ -85,7 +85,8 @@ Da fare (proposta implementativa nel repo):
 - **Zoom dipendente**: stile più marcato a zoom elevato; possibile outline tratteggiato per non coprire OSM.
 - **Selezione**: stato “selected” più evidente (halo / secondo contorno) coerente con tema dark della sidebar.
 - **Accessibilità**: contrasto colori secondo WCAG dove possibile.
-- **Mappa di base**: Aggiungere tiles webmapp (default) e aggiungere altri layer selezionabili (OSM, satellite)
+- **Mappa di base**: Aggiungere tiles webmapp (default, 
+https://api.webmapp.it/tiles/14/8640/5923.png) e aggiungere altri layer selezionabili (OSM, satellite)
 
 ## 4. Vista JSON — export CRM nel popup comune
 
@@ -115,6 +116,16 @@ Da fare (proposta implementativa nel repo):
 - **Statistiche Raggrupamenti**: Dashboard con grafici e mappe che rappresentano le principali statistiche presenti nel database relative ai raggruppamenti territoriali
 - **Statistiche Parchi e aree protette**: Dashboard con grafici e mappe che rappresentano le principali statistiche presenti nel database relative ai parchi e alle aree protette
 - **Funionalità Download PDF**: tutte le singole pagine di statistiche devono avere la possibilità di scaricare la visualizzazione a schermo in formato PDF
+
+## 8. Copyrights / Software INFO ecc.
+
+- **Aggiungere licenza MIT**: includere il testo della licenza MIT del software nel repository e renderla consultabile dall’app.
+- **CTA “Info software”**: aggiungere una CTA in footer/header che apra un popup/modal con le informazioni del software.
+- **Versionamento**: definire e visualizzare la versione del software con schema a tre livelli \(major.minor.patch\) (SemVer).
+- **Prima release**: creare il primo rilascio ufficiale del software (versione iniziale e note di rilascio).
+- **Changelog**: introdurre e mantenere un `CHANGELOG.md` (formato tipo “Keep a Changelog”) e collegarlo dalle “Info software” (link “Changelog” o note dell’ultima release).
+- **Info nel popup**: nel popup “Info software” mostrare almeno licenza, versione attuale e link a eventuali note di rilascio.
+- **Variabile di ambiente**: aggiungere/mostrare un indicatore dell’ambiente attivo (es. `DEV` / `PROD`) nelle “Info software”.
 
 
 ---
