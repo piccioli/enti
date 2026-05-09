@@ -23,7 +23,10 @@
     <div class="dot loading" id="db-dot"></div>
     <span id="db-label">Connessione...</span>
   </div>
-  <div id="stats"></div>
+  <div class="header-actions">
+    <div id="stats"></div>
+    <button id="btn-software-info" class="btn-softinfo" type="button">Info software</button>
+  </div>
 </header>
 
 <main>
@@ -109,6 +112,46 @@
 
   <div id="map"></div>
 </main>
+
+<div id="software-modal" class="modal hidden" aria-hidden="true">
+  <div class="modal-overlay" data-close-modal="1"></div>
+  <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="software-modal-title">
+    <div class="modal-header">
+      <h2 id="software-modal-title">Info software</h2>
+      <button class="modal-close" type="button" aria-label="Chiudi" data-close-modal="1">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="modal-field">
+          <div class="modal-label">Versione</div>
+          <div class="modal-value"><span id="sw-version">—</span></div>
+        </div>
+        <div class="modal-field">
+          <div class="modal-label">Ambiente</div>
+          <div class="modal-value"><span id="sw-env">—</span></div>
+        </div>
+      </div>
+
+      <div class="modal-links">
+        <a class="modal-link" href="/LICENSE" target="_blank" rel="noopener">Licenza (MIT)</a>
+        <a class="modal-link" href="/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+      </div>
+
+      <div class="modal-about">
+        <div class="modal-about-title">Informazioni</div>
+        <div class="modal-about-text">
+          <div class="modal-about-desc">
+            Applicazione web per visualizzazione e ricerca dei comuni italiani con dati ISTAT, mappa interattiva e confini amministrativi su PostGIS.
+          </div>
+          Autore: <strong>Alessio Piccioli</strong> ·
+          <a href="mailto:alessiopiccioli@webmapp.it">alessiopiccioli@webmapp.it</a><br>
+          Per: <strong>Webmapp Srl</strong>
+        </div>
+      </div>
+      <div id="sw-meta-error" class="modal-error hidden">Impossibile caricare le informazioni (versione/ambiente).</div>
+    </div>
+  </div>
+</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>

@@ -39,7 +39,50 @@ const selGroupKind = document.getElementById('sel-group-kind');
 const selGroup     = document.getElementById('sel-group');
 const groupDetail  = document.getElementById('group-detail');
 
+const btnSoftwareInfo = document.getElementById('btn-software-info');
+const softwareModal = document.getElementById('software-modal');
+const swVersionEl = document.getElementById('sw-version');
+const swEnvEl = document.getElementById('sw-env');
+const swMetaErrorEl = document.getElementById('sw-meta-error');
+
 const selected = new Set(); // pro_com selezionati (export)
+
+// ── Software info modal ───────────────────────────────────────────────────────
+let softwareMetaCache = null;
+
+function modalOpen() {
+  if (!softwareModal) return;
+  softwareModal.classList.remove('hidden');
+  softwareModal.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+}
+
+function modalClose() {
+  if (!softwareModal) return;
+  softwareModal.classList.add('hidden');
+  softwareModal.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+}
+
+async function loadSoftwareMetaOnce() {
+  if (softwareMetaCache) return softwareMetaCache;
+  if (swMetaErrorEl) swMetaErrorEl.classList.add('hidden');
+  try {
+    softwareMetaCache = await apiFetch('/api/meta');
+    return softwareMetaCache;
+  } catch (e) {
+    console.warn('Failed to load /api/meta', e);
+    if (swMetaErrorEl) swMetaErrorEl.classList.remove('hidden');
+    return null;
+  }
+}
+
+async function openSoftwareInfo() {
+  modalOpen();
+  const meta = await loadSoftwareMetaOnce();
+  if (meta && swVersionEl) swVersionEl.textContent = meta.version || '—';
+  if (meta && swEnvEl) swEnvEl.textContent = meta.env || '—';
+}
 
 // ── Map ──────────────────────────────────────────────────────────────────────
 const map = L.map('map', { zoomControl: true }).setView([42.5, 12.5], 6);
@@ -279,6 +322,21 @@ function showLoading(msg) {
 function hideLoading() { loadingEl.classList.add('hidden'); }
 
 // ── Events ───────────────────────────────────────────────────────────────────
+if (btnSoftwareInfo && softwareModal) {
+  btnSoftwareInfo.addEventListener('click', openSoftwareInfo);
+  softwareModal.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!t) return;
+    if (t && t.getAttribute && t.getAttribute('data-close-modal') === '1') {
+      modalClose();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!softwareModal.classList.contains('hidden')) modalClose();
+  });
+}
+
 selReg.addEventListener('change', async () => {
   state.reg  = selReg.value ? parseInt(selReg.value) : null;
   state.prov = null;

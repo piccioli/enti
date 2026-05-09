@@ -2,16 +2,6 @@
 
 Note operative da tenere in backlog (priorità non definita).
 
-## 1. Dati — enti territoriali e aggregazioni comuni (Italia)
-
-*Implementazioni base nel repo*: metadati su `territorial_groups` (`source_name`, `source_url`, `reference_year`, `external_id`, `is_demo`), datapack `territorial_groups_meta` nel `manifest`, filtri `GET /api/groups` geografici (`reg`, `prov`, `bbox`) + full-text `ft`, filtro vigenti con `include_expired`, paginazione, seed demo in `db/seeds/`, import NDJSON pilota (`import_territorial_ndjson.js`) e aggiornamento import Toscana con fonte anno.
-
-Da fare per scala nazionale omogenea:
-
-- **Dataset per ogni tipo** (`group_kind`): scegliere una fonte primaria Italia o pipeline regionale ripetibile.
-- **Convenzione slug** da applicare in produzione quando si combinano più fonti (`reg-{cod}-{chiave}`, prefisso IPA, ecc.).
-- **Import batch** esterni (non solo NDJSON pilota): validazione slug duplicati prima dell’UPSERT massivo.
-
 ## 2. Dati — parchi e aree protette
 
 - **Fonti**: Incorporare dataset istituzionali (es. repertorio aree protette / EUAP — verificare licenza e aggiornamento periodico).
@@ -130,4 +120,14 @@ https://api.webmapp.it/tiles/14/8640/5923.png) e aggiungere altri layer selezion
 
 ---
 
-*Ultimo aggiornamento: note di progetto interne.*
+# DONE
+
+## 1. Dati — enti territoriali e aggregazioni comuni (Italia)
+
+*Implementazioni base nel repo*: metadati su `territorial_groups` (`source_name`, `source_url`, `reference_year`, `external_id`, `is_demo`), datapack `territorial_groups_meta` nel `manifest`, filtri `GET /api/groups` geografici (`reg`, `prov`, `bbox`) + full-text `ft`, filtro vigenti con `include_expired`, paginazione, seed demo in `db/seeds/`, import NDJSON pilota (`import_territorial_ndjson.js`) e aggiornamento import Toscana con fonte anno.
+
+Da fare per scala nazionale omogenea:
+
+- **Dataset per ogni tipo** (`group_kind`): scegliere una fonte primaria Italia o pipeline regionale ripetibile.
+- **Convenzione slug** da applicare in produzione quando si combinano più fonti (`reg-{cod}-{chiave}`, prefisso IPA, ecc.).
+- **Import batch** esterni (non solo NDJSON pilota): validazione slug duplicati prima dell’UPSERT massivo.

@@ -69,6 +69,7 @@ services:
       PGUSER: postgres
       PGPASSWORD: ${POSTGRES_PASSWORD}
       NODE_ENV: production
+      APP_ENV: ${APP_ENV:-DEV}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/healthz || exit 1"]
       interval: 15s
