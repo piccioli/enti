@@ -26,6 +26,68 @@ docker compose logs -f loader
 
 Apri il browser: **http://localhost:8080**
 
+## Datapack (JSON + GeoJSON): build, import, deploy
+
+Per **produzione** o per server senza accesso affidabile a ISTAT / IPA al momento del deploy, puoi lavorare con un *datapack*: file statici (GeoJSON + JSON + `manifest.json` con checksum) generati **una tantum** dove ti è comodo fare download ed elaborazioni, e poi importati nel Postgres di produzione senza riscaricare nulla.
+
+La cartella tipica (es. `./datapack-dist/`, ignorata da git) contiene:
+
+| File | Contenuto |
+|---|---|
+| `regions.geojson` | Regioni + geometrie |
+| `provinces.geojson` | Province + geometrie |
+| `municipalities.geojson` | Comuni con attributi già “app-ready” (popolazione, quota, L.131, contatti, ecc.) + geometria |
+| `territorial_groups.json` | Raggruppamenti e membri (`groups` / `members`) |
+| `manifest.json` | Schema `comuni-datapack-v1`, conteggi, SHA‑256 dei file |
+
+### 1) Generare il datapack dagli scraping ISTAT (macchina di build)
+
+```bash
+# Richiede rete → eseguire dove puoi parlare con istat.it / demo POS / IPA, ecc.
+# Output predefinito: ./datapack-dist (override: DATAPACK_DIR=/assoluto/o/relativo)
+CREATE_ZIP=1 ./scripts/datapack_build_from_sources.sh   # ZIP opzionale solo se CREATE_ZIP=1 (vedi loader/export_datapack.sh)
+```
+
+Solo esportazione (DB già popolato dopo un loader normale):
+
+```bash
+CREATE_ZIP=0 ./scripts/datapack_export.sh
+```
+
+### 2) Import sul database di destinazione
+
+Senza argomenti importa da **`./datapack-dist`** (rispetto alla root del progetto).  
+`./scripts/datapack_import.sh` accetta inoltre:
+
+- una **cartella** che contiene già `manifest.json` e i GeoJSON allo stesso livello (o in un’unica sottocartella);
+- un **file `.zip`** del datapack: lo script esegue da solo `unzip` in una directory temporanea e poi importa (richiede `unzip` sul host);
+- una **cartella senza `manifest.json`** ma con **un solo** file `.zip`: viene estratto automaticamente.
+
+Esempi:
+
+```bash
+./scripts/datapack_import.sh                              # default: ./datapack-dist
+./scripts/datapack_import.sh ./datapack-dist
+./scripts/datapack_import.sh /percorso/comuni-datapack-2026.zip
+./scripts/datapack_import.sh /cartella_con_un_solo_zip/
+```
+
+### 3) Deploy stack applicativo + (opzionale) import datapack
+
+```bash
+./scripts/deploy.sh
+# Import datapack dopo avvio (default ./datapack-dist; oppure .zip o altra cartella):
+./scripts/deploy.sh --import-datapack
+./scripts/deploy.sh --import-datapack /percorso/cartella_o_file.zip
+```
+
+Gli script “collaudati” vivono nell’immagine **`loader`**:
+
+- `/loader/export_datapack.sh` — Postgres → GeoJSON / JSON (`DATAPACK_DIR`, `CREATE_ZIP`, `ZIP_NAME`)
+- `/loader/import_datapack.sh` — GeoJSON / JSON → Postgres (`DATAPACK_DIR`), con verifica SHA‑256 da `manifest.json`
+
+Se Docker risponde con `No such file` su `/loader/export_datapack.sh`, l’immagine `loader` era vecchia: esegui `docker compose build loader` (gli script `datapack_*.sh` lo fanno automaticamente) o `docker compose build --no-cache loader` in caso di cache capziosa.
+
 ## Servizi
 
 | Servizio | Porta | Descrizione |
