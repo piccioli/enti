@@ -17,6 +17,13 @@ mkdir -p "${OUT}"
 
 echo "=== Ricostruzione datapack dagli scrape ISTAT (load.sh --force in container) → ${OUT} ==="
 
+# Workspace temporaneo per sorgenti/artefatti di build (evita dipendenza da ./data).
+TMP_DATA="$(mktemp -d "${TMPDIR:-/tmp}/wm-municipalities-data.XXXXXX")"
+cleanup() {
+  rm -rf "${TMP_DATA}" || true
+}
+trap cleanup EXIT
+
 # Le immagini devono includere gli ultimi script (evita cache vecchie).
 docker compose build loader api
 
@@ -26,19 +33,33 @@ until docker compose exec -T db pg_isready -U postgres -d comuni >/dev/null 2>&1
   sleep 2
 done
 
-docker compose run --rm loader bash load.sh --force
+echo "=== Build contatti comuni (IPA) → /data/contatti-comuni.csv (opzionale) ==="
+docker compose run --rm \
+  -v "${TMP_DATA}:/data" \
+  loader bash -lc 'bash /loader/build_contatti_comuni_from_ipa.sh || echo "WARN: contatti comuni non generati (ok se vuoi SKIP_COMUNI_CONTATTI=1 o rete non disponibile)"'
+
+docker compose run --rm \
+  -v "${TMP_DATA}:/data" \
+  loader bash load.sh --force
 
 echo "=== Import raggruppamenti nazionali (città metropolitane) ==="
 docker compose exec -T api node scripts/import_italy_metropolitan_cities.js
 
-if [[ -f "${ROOT_DIR}/data/toscana-unioni-2024-01-01.csv" ]]; then
-  echo "=== Import Toscana (unioni) da CSV locale ==="
-  docker compose run --rm \
-    -v "${ROOT_DIR}/data:/data:ro" \
-    api node scripts/import_toscana_unioni.js --file /data/toscana-unioni-2024-01-01.csv
-else
-  echo "=== Skip import Toscana: CSV locale non trovato in data/ ==="
-fi
+echo "=== Download + import unioni/comunità montane (Italia, ANCI 2023) ==="
+ANCI_UNIONI_PDF_URL="https://www.anci.it/wp-content/uploads/Elenco-Unioni-di-Comuni-anno-2023.pdf"
+
+# Conversione PDF->TXT nel container loader (poppler-utils già presente nell'immagine).
+docker compose run --rm \
+  -v "${TMP_DATA}:/data" \
+  loader bash -lc \
+  "set -euo pipefail; \
+   echo 'Downloading: ${ANCI_UNIONI_PDF_URL}'; \
+   curl -L '${ANCI_UNIONI_PDF_URL}' -o /data/anci-unioni-2023.pdf; \
+   pdftotext -layout /data/anci-unioni-2023.pdf /data/anci-unioni-2023.txt"
+
+docker compose run --rm \
+  -v "${TMP_DATA}:/data:ro" \
+  api node scripts/import_italy_unioni_anci_2023.js --file /data/anci-unioni-2023.txt
 
 docker compose run --rm \
   -e DATAPACK_DIR=/datapack \

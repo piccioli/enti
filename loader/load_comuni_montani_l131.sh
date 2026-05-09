@@ -25,7 +25,7 @@ load_comuni_montani_l131_main() {
     echo "Using local PDF: ${COMUNI_MONTANI_L131_PDF}"
     cp -f "${COMUNI_MONTANI_L131_PDF}" "${pdf}"
   else
-    local url="${COMUNI_MONTANI_L131_PDF_URL:-https://www.biblus.accademiafirenze.it/wp-content/uploads/2026/02/comuni-montani-elenco-febbraio-2026.pdf}"
+    local url="${COMUNI_MONTANI_L131_PDF_URL:-https://www.affariregionali.it/media/koydmoxc/comuni-montani-elenco-feb-2026.pdf}"
     echo "Downloading comuni montani PDF: ${url}"
     curl "${CURL_ARGS[@]}" "${url}" -o "${pdf}"
   fi

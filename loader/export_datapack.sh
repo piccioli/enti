@@ -69,23 +69,32 @@ ogr2ogr -f GeoJSON "${OUT}/municipalities.geojson" "${PG_CONN}" \
   -t_srs EPSG:4326 -lco RFC7946=YES
 
 echo "[4/4] territorial_groups.json ..."
-GR=$(PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PGUSER}" -d "${PGDATABASE}" -t -A -q \
-  -c "SELECT COALESCE(json_agg(row_to_json(t) ORDER BY t.id), '[]'::json)::text FROM (
-        SELECT id, slug, label, group_kind, notes,
-               valid_from::text AS valid_from,
-               valid_to::text AS valid_to,
-               source_name,
-               source_url,
-               reference_year,
-               external_id,
-               is_demo
-        FROM territorial_groups
-      ) t;")
-
-MB=$(PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PGUSER}" -d "${PGDATABASE}" -t -A -q \
-  -c "SELECT COALESCE(json_agg(row_to_json(t) ORDER BY t.group_id, t.pro_com), '[]'::json)::text FROM (SELECT group_id, pro_com, joined_at::text AS joined_at FROM territorial_group_members) t;")
-
-jq -n --argjson groups "${GR}" --argjson members "${MB}" '{groups: $groups, members: $members}' > "${OUT}/territorial_groups.json"
+PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PGUSER}" -d "${PGDATABASE}" -t -A -q \
+  -c "SELECT json_build_object(
+        'groups',
+        COALESCE((
+          SELECT json_agg(row_to_json(t) ORDER BY t.id)
+          FROM (
+            SELECT id, slug, label, group_kind, notes,
+                   valid_from::text AS valid_from,
+                   valid_to::text AS valid_to,
+                   source_name,
+                   source_url,
+                   reference_year,
+                   external_id,
+                   is_demo
+            FROM territorial_groups
+          ) t
+        ), '[]'::json),
+        'members',
+        COALESCE((
+          SELECT json_agg(row_to_json(m) ORDER BY m.group_id, m.pro_com)
+          FROM (
+            SELECT group_id, pro_com, joined_at::text AS joined_at
+            FROM territorial_group_members
+          ) m
+        ), '[]'::json)
+      )::text" > "${OUT}/territorial_groups.json"
 
 TG_GROUPS_COUNT="$(jq '.groups | length' "${OUT}/territorial_groups.json")"
 TG_MEMBERS_COUNT="$(jq '.members | length' "${OUT}/territorial_groups.json")"
