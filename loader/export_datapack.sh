@@ -70,12 +70,28 @@ ogr2ogr -f GeoJSON "${OUT}/municipalities.geojson" "${PG_CONN}" \
 
 echo "[4/4] territorial_groups.json ..."
 GR=$(PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PGUSER}" -d "${PGDATABASE}" -t -A -q \
-  -c "SELECT COALESCE(json_agg(row_to_json(t) ORDER BY t.id), '[]'::json)::text FROM (SELECT id, slug, label, group_kind, notes, valid_from::text AS valid_from, valid_to::text AS valid_to FROM territorial_groups) t;")
+  -c "SELECT COALESCE(json_agg(row_to_json(t) ORDER BY t.id), '[]'::json)::text FROM (
+        SELECT id, slug, label, group_kind, notes,
+               valid_from::text AS valid_from,
+               valid_to::text AS valid_to,
+               source_name,
+               source_url,
+               reference_year,
+               external_id,
+               is_demo
+        FROM territorial_groups
+      ) t;")
 
 MB=$(PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PGUSER}" -d "${PGDATABASE}" -t -A -q \
   -c "SELECT COALESCE(json_agg(row_to_json(t) ORDER BY t.group_id, t.pro_com), '[]'::json)::text FROM (SELECT group_id, pro_com, joined_at::text AS joined_at FROM territorial_group_members) t;")
 
 jq -n --argjson groups "${GR}" --argjson members "${MB}" '{groups: $groups, members: $members}' > "${OUT}/territorial_groups.json"
+
+TG_GROUPS_COUNT="$(jq '.groups | length' "${OUT}/territorial_groups.json")"
+TG_MEMBERS_COUNT="$(jq '.members | length' "${OUT}/territorial_groups.json")"
+TG_REF_MAX="$(PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PGUSER}" -d "${PGDATABASE}" -t -A -q \
+  -c 'SELECT COALESCE(MAX(reference_year)::text, '\'''\'' ) FROM territorial_groups')"
+BUILD_ID="${NOW}"
 
 echo "=== manifest.json ==="
 (
@@ -84,12 +100,17 @@ echo "=== manifest.json ==="
   HASH_PROV=$(sha256sum provinces.geojson | awk '{print $1}')
   HASH_COM=$(sha256sum municipalities.geojson | awk '{print $1}')
   HASH_TG=$(sha256sum territorial_groups.json | awk '{print $1}')
+
   jq -n \
     --arg schema "comuni-datapack-v1" \
     --argjson version 1 \
     --arg exported_at "${NOW}" \
     --argjson istat_year "${YEAR}" \
     --argjson municipalities_count "${COUNT}" \
+    --argjson tg_groups "${TG_GROUPS_COUNT}" \
+    --argjson tg_members "${TG_MEMBERS_COUNT}" \
+    --arg ref_max "$(printf '%s' "${TG_REF_MAX}" | tr -d '\r\n')" \
+    --arg build_id "${BUILD_ID}" \
     --arg hash_regions "${HASH_REG}" \
     --arg hash_provinces "${HASH_PROV}" \
     --arg hash_municipalities "${HASH_COM}" \
@@ -100,6 +121,12 @@ echo "=== manifest.json ==="
       exported_at: $exported_at,
       istat_year: $istat_year,
       municipalities_count: $municipalities_count,
+      territorial_groups_meta: ({
+        schema_version: 1,
+        groups_count: $tg_groups,
+        members_count: $tg_members,
+        build_id: $build_id
+      } + (if ($ref_max | length) == 0 then {} else {"reference_year_max": ($ref_max | tonumber)} end)),
       files: {
         regions: { path: "regions.geojson", sha256: $hash_regions },
         provinces: { path: "provinces.geojson", sha256: $hash_provinces },

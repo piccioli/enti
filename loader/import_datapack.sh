@@ -46,6 +46,17 @@ verify_hash provinces "$PRV"
 verify_hash municipalities "$COM"
 verify_hash territorial_groups "$TG"
 
+if jq -e '.territorial_groups_meta | type=="object"' "$MAN" >/dev/null 2>&1; then
+  FG="$(jq '.groups | length' "${TG}")"
+  FM="$(jq '.members | length' "${TG}")"
+  MG="$(jq -r '.territorial_groups_meta.groups_count // empty' "${MAN}")"
+  MM="$(jq -r '.territorial_groups_meta.members_count // empty' "${MAN}")"
+  [[ -n "${MG}" && "${MG}" != "${FG}" ]] && echo "WARN: manifest.territorial_groups_meta.groups_count (${MG}) ≠ file (${FG})" >&2
+  [[ -n "${MM}" && "${MM}" != "${FM}" ]] && echo "WARN: manifest.territorial_groups_meta.members_count (${MM}) ≠ file (${FM})" >&2
+  RYR="$(jq -r '.territorial_groups_meta.reference_year_max // empty' "${MAN}")"
+  [[ -n "${RYR}" && "${RYR}" =~ ^[0-9]+$ ]] || true
+fi
+
 PG_CONN="PG:host=${PGHOST:-db} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER} password=${PGPASSWORD}"
 
 echo "=== Svuota tabelle geografiche e raggruppamenti ==="
@@ -87,7 +98,30 @@ MEM_CSV="${TMPDIR}/members.csv"
 
 if [[ "${G_COUNT}" -gt 0 ]]; then
   jq -r '.groups[] |
-    [.id, .slug, .label, .group_kind, (.notes // ""), (.valid_from // ""), (.valid_to // "")] | @csv' "${TG}" > "${GRP_CSV}"
+    [
+      .id,
+      .slug,
+      .label,
+      .group_kind,
+      (.notes // ""),
+      (.valid_from // ""),
+      (.valid_to // ""),
+      (.source_name // ""),
+      (.source_url // ""),
+      (
+        if .reference_year == null or (.reference_year | type) == "null" then ""
+        elif (.reference_year | type) == "number" then (.reference_year | tonumber | tostring)
+        else (.reference_year | tostring)
+        end
+      ),
+      (.external_id // ""),
+      (
+        if ((.is_demo // false) == true) then "true"
+        elif ((.is_demo // false) | type) == "string" then (if (.is_demo|ascii_downcase) == "true" then "true" else "false" end)
+        else "false"
+        end
+      )
+    ] | @csv' "${TG}" > "${GRP_CSV}"
 else
   echo "(skip) Nessun territorial_group nel datapack."
 fi
@@ -105,11 +139,19 @@ CREATE TEMP TABLE _dp_groups (
   group_kind text,
   notes text,
   valid_from text,
-  valid_to text
+  valid_to text,
+  source_name text,
+  source_url text,
+  reference_year text,
+  external_id text,
+  is_demo text
 );
-\copy _dp_groups (id, slug, label, group_kind, notes, valid_from, valid_to) FROM '${GRP_CSV}' WITH (FORMAT csv);
+\copy _dp_groups (id, slug, label, group_kind, notes, valid_from, valid_to, source_name, source_url, reference_year, external_id, is_demo) FROM '${GRP_CSV}' WITH (FORMAT csv);
 
-INSERT INTO territorial_groups (id, slug, label, group_kind, notes, valid_from, valid_to)
+INSERT INTO territorial_groups (
+  id, slug, label, group_kind, notes, valid_from, valid_to,
+  source_name, source_url, reference_year, external_id, is_demo
+)
 SELECT
   g.id,
   g.slug,
@@ -117,7 +159,20 @@ SELECT
   g.group_kind,
   NULLIF(btrim(g.notes), ''),
   NULLIF(btrim(g.valid_from), '')::date,
-  NULLIF(btrim(g.valid_to), '')::date
+  NULLIF(btrim(g.valid_to), '')::date,
+  NULLIF(btrim(g.source_name), ''),
+  NULLIF(btrim(g.source_url), ''),
+  CASE
+    WHEN btrim(g.reference_year) = '' THEN NULL
+    ELSE NULLIF(trim(g.reference_year), '')::smallint
+  END,
+  NULLIF(btrim(g.external_id), ''),
+  (
+    CASE
+      WHEN btrim(lower(COALESCE(g.is_demo, ''))) IN ('t', 'true', '1') THEN TRUE
+      ELSE FALSE
+    END
+  )
 FROM _dp_groups g;
 
 SELECT setval(

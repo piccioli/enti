@@ -38,7 +38,7 @@ La cartella tipica (es. `./datapack-dist/`, ignorata da git) contiene:
 | `provinces.geojson` | Province + geometrie |
 | `municipalities.geojson` | Comuni con attributi già “app-ready” (popolazione, quota, L.131, contatti, ecc.) + geometria |
 | `territorial_groups.json` | Raggruppamenti e membri (`groups` / `members`) |
-| `manifest.json` | Schema `comuni-datapack-v1`, conteggi, SHA‑256 dei file |
+| `manifest.json` | Schema `comuni-datapack-v1`, conteggi, SHA‑256 dei file e `territorial_groups_meta` (conteggi gruppi/membri, `build_id`, eventuale `reference_year_max`) |
 
 ### 1) Generare il datapack dagli scraping ISTAT (macchina di build)
 
@@ -109,29 +109,63 @@ Se Docker risponde con `No such file` su `/loader/export_datapack.sh`, l’immag
 | `GET /api/municipalities?has_contacts=1` | Solo comuni con almeno un contatto/fiscale valorizzato (IPA) |
 | `GET /api/municipalities/geojson?prov=50` | Confini comunali (GeoJSON) |
 | `GET /api/municipalities/50025` | Dettaglio comune + geometria |
-| `GET /api/groups` | Elenco raggruppamenti (`?kind=`, `?q=`) |
+| `GET /api/groups` | Elenco raggruppamenti (`?kind=`, `?q=`, `?ft=`, `?reg=&prov=`, `?bbox=minLon,minLat,maxLon,maxLat`, paginazione, `?include_expired=`) |
 | `GET /api/groups/meta/kinds` | Tipi ammessi (unioni di comuni, comunità montane, …) |
 | `GET /api/groups/:id` | Dettaglio + elenco comuni (id numerico o `slug`) |
 | `GET /api/groups/:id/geojson` | Unione delle geometrie dei comuni del gruppo |
 
-### Raggruppamenti territoriali (unioni di comuni, ecc.)
+### Raggruppamenti territoriali (unioni di comuni, comunità montane, ecc.)
 
-Le tabelle `territorial_groups` e `territorial_group_members` sono create da `db/init/02_territorial_groups.sql`.
-
-- **Database nuovo** (primo `docker compose up` senza volume Postgres): lo script viene eseguito automaticamente con `docker-entrypoint-initdb.d`.
-- **Database già esistente** (volume `pgdata` già creato): applicare una tantum:
+Schema: `db/init/02_territorial_groups.sql` (eseguito sul **primo bootstrap** Postgres). Aggiunge metadati su fonti e anni con:
 
 ```bash
-docker compose exec -T db psql -U postgres -d comuni < db/init/02_territorial_groups.sql
+docker compose exec -T db psql -U postgres -d comuni < db/migrations/012_territorial_groups_metadata.sql
 ```
 
-Poi ricostruire il servizio API se necessario: `docker compose up -d --build api web`.
+Colonne chiave:
 
-### Import pilota Toscana (Unioni di Comuni)
+| Colonna | Uso |
+|---|---|
+| `slug` | Univoco stabile nell’istanza CRM (preferire prefissi geografici tipo `reg-9-<slug>` oppure chiave deriva-da-fonte `external_id`) |
+| `source_name` / `source_url` | Tracciabilità open data ministeriale/regionale |
+| `reference_year` | Anno statuto / anno di aggiornamento dataset |
+| `external_id` | Chiave nell’origine; univoca insieme a `source_name` se valorizzati entrambi |
+| `valid_from` / `valid_to` | Storicità; elenco `/api/groups` mostra solo enti vigenti salvo `?include_expired=1` |
+| `is_demo` | Raggruppamenti solo dimostrativi |
 
-Fonte ufficiale: Regione Toscana — dataset open data “Comuni della Toscana con funzione statistica associata per statuto al 01/01/2024”.
+**Dati demo (opzionali)** — dopo il loader comuni:
 
-Import automatico (crea/aggiorna gruppi `toscana-*` e sostituisce i membri):
+```bash
+docker compose exec -T db psql -U postgres -d comuni < db/seeds/demo_territorial_groups.sql
+```
+
+**Lista API**
+
+- `GET /api/groups?kind=&q=` — filtro tipo e LIKE su `label`/`slug`.
+- `GET /api/groups?ft=` — ricerca full-text italiana su label+slug (indice GIN).
+- `GET /api/groups?reg=9` o `?prov=50` — gruppi che hanno **almeno un comune membro** in quella regione/provincia.
+- `GET /api/groups?bbox=minLon,minLat,maxLon,maxLat` — stesso concetto usando intersezione geometria comunale nel riquadro (SRID 4326).
+- `?limit=` (max 500) e `?offset=` — paginazione.
+
+**Datapack** — `manifest.json` include ora `territorial_groups_meta` (`schema_version`, `groups_count`, `members_count`, `build_id`, opzionale `reference_year_max`); durante l’import vengono segnalate discrepanze con i contatori del file manifest (solo WARN).
+
+Formato interoperabile per caricamenti nazionali: file **NDJSON** o JSON **array**. Ogni elemento:
+
+- obbligatori: `slug`, `label`, `group_kind`, `members` (array numeri `pro_com` ISTAT);
+- facoltativi: `notes`, `valid_from`, `valid_to`, `source_name`, `source_url`, `reference_year`, `external_id`, `is_demo`.
+
+Esempio in repo: [db/examples/territorial_groups_import.ndjson](db/examples/territorial_groups_import.ndjson).
+
+```bash
+docker compose run --rm -v "$(pwd)/db/examples:/samples:ro" api \
+  node scripts/import_territorial_ndjson.js --file /samples/territorial_groups_import.ndjson
+```
+
+Esegui dalla **root del progetto** (`$(pwd)` risolve la cartella `db/examples` sul host).
+
+### Import pilota Regione Toscana (Unioni di Comuni)
+
+Fonte open data indicata nel dataset “Comuni della Toscana con funzione statistica associata per statuto al 01/01/2024”; lo script imposta anche `source_name`, `source_url`, `reference_year` e `external_id`.
 
 ```bash
 docker compose up -d --build api

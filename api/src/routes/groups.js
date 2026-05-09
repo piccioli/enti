@@ -28,30 +28,143 @@ function resolveGroupClause(idParam, params) {
   return `g.slug = $${params.length}`;
 }
 
-/** GET / — elenco con filtri opzionali */
+function parseIntParam(raw) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return null;
+  const n = parseInt(String(raw), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** GET / — elenco con filtri geografici/testuali opzionali */
 router.get('/', async (req, res, next) => {
   try {
     const kind = req.query.kind ? String(req.query.kind).trim() : null;
-    const q = req.query.q ? String(req.query.q).trim() : null;
+    const qRaw = req.query.q ? String(req.query.q).trim() : null;
+    const ftsReq = req.query.ft != null ? String(req.query.ft) : '';
+    const ftsRaw = ftsReq.trim().slice(0, 200);
+
+    const reg = parseIntParam(req.query.reg);
+    const prov = parseIntParam(req.query.prov);
+
+    /** @type {{ minLon: number, minLat: number, maxLon: number, maxLat: number } | null} */
+    let bbox = null;
+    const bboxRaw = req.query.bbox ? String(req.query.bbox).trim() : '';
+    if (bboxRaw) {
+      const parts = bboxRaw.split(',').map((s) => parseFloat(String(s).trim()));
+      const [minLon, minLat, maxLon, maxLat] = parts;
+      if (parts.length !== 4 || ![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) {
+        return res.status(400).json({ error: 'bbox richiede minLon,minLat,maxLon,maxLat numeriche' });
+      }
+      if (minLon >= maxLon || minLat >= maxLat) {
+        return res.status(400).json({ error: 'bbox invalido (ordine o ampiezza)' });
+      }
+      bbox = { minLon, minLat, maxLon, maxLat };
+    }
+
+    let limit = parseInt(req.query.limit || '50', 10);
+    if (!Number.isFinite(limit) || limit <= 0) limit = 50;
+    limit = Math.min(limit, 500);
+
+    let offset = parseInt(req.query.offset || '0', 10);
+    if (!Number.isFinite(offset) || offset < 0) offset = 0;
+
+    const includeExpired =
+      req.query.include_expired === '1'
+      || String(req.query.include_expired || '').toLowerCase() === 'true';
 
     const params = [];
-    const conds = [];
+
+    /** @type {string[]} */
+    const condsOnG = [];
+
     if (kind) {
       params.push(kind);
-      conds.push(`g.group_kind = $${params.length}`);
+      condsOnG.push(`g.group_kind = $${params.length}`);
     }
-    if (q) {
-      params.push(`%${q}%`);
-      conds.push(`(g.label ILIKE $${params.length} OR g.slug ILIKE $${params.length})`);
+
+    if (ftsRaw) {
+      params.push(ftsRaw);
+      condsOnG.push(
+        `(to_tsvector('italian', coalesce(g.label,'')||' '||coalesce(g.slug,'')) @@ plainto_tsquery('italian', $${params.length}))`
+      );
+    } else if (qRaw) {
+      params.push(`%${qRaw}%`);
+      condsOnG.push(`(g.label ILIKE $${params.length} OR g.slug ILIKE $${params.length})`);
     }
-    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+
+    if (!includeExpired) {
+      condsOnG.push(`(g.valid_to IS NULL OR g.valid_to >= CURRENT_DATE)`);
+    }
+
+    /** Condizioni geografiche sui comuni membri */
+    /** @type {string[]} */
+    const geoWhere = [];
+
+    if (reg !== null) {
+      params.push(reg);
+      geoWhere.push(`m.cod_reg = $${params.length}`);
+    }
+    if (prov !== null) {
+      params.push(prov);
+      geoWhere.push(`m.cod_prov = $${params.length}`);
+    }
+    if (bbox !== null) {
+      const pi = params.length + 1;
+      params.push(bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat);
+      geoWhere.push(
+        `ST_Intersects(m.geom, ST_MakeEnvelope(`
+        + `$${pi}::double precision, $${pi + 1}::double precision, `
+        + `$${pi + 2}::double precision, $${pi + 3}::double precision, 4326))`
+      );
+    }
+
+    const groupWhereSql = condsOnG.length ? `AND (${condsOnG.join(' AND ')})` : '';
+    const geoWhereSql = geoWhere.length ? `WHERE ${geoWhere.join(' AND ')}` : '';
+
+    const selectList = `
+        g.id, g.slug, g.label, g.group_kind, g.notes,
+        g.valid_from, g.valid_to,
+        g.source_name, g.source_url, g.reference_year, g.external_id, g.is_demo,
+        (SELECT count(*)::int FROM territorial_group_members m2 WHERE m2.group_id = g.id) AS member_count`;
+
+    if (geoWhere.length > 0) {
+      params.push(limit, offset);
+      const limIdx = params.length - 1;
+      const offIdx = params.length;
+      const { rows } = await db.query(
+        `WITH ids AS (
+          SELECT DISTINCT g.id AS id
+          FROM territorial_groups g
+          INNER JOIN territorial_group_members t ON t.group_id = g.id
+          INNER JOIN municipalities m ON m.pro_com = t.pro_com
+          ${geoWhereSql}
+          ${groupWhereSql}
+        )
+        SELECT ${selectList}
+        FROM territorial_groups g
+        INNER JOIN ids i ON i.id = g.id
+        ORDER BY g.group_kind, g.label
+        LIMIT $${limIdx} OFFSET $${offIdx}`,
+        params
+      );
+
+      return res.json(rows.map((r) => ({
+        ...r,
+        kind_label: KIND_LABELS[r.group_kind] || r.group_kind,
+      })));
+    }
+
+    params.push(limit, offset);
+    const limIdx = params.length - 1;
+    const offIdx = params.length;
+
+    const wherePlain = condsOnG.length ? `WHERE ${condsOnG.join(' AND ')}` : '';
 
     const { rows } = await db.query(
-      `SELECT g.id, g.slug, g.label, g.group_kind, g.notes,
-              (SELECT count(*)::int FROM territorial_group_members m WHERE m.group_id = g.id) AS member_count
+      `SELECT ${selectList.replace(/\n\s+/g, ' ')}
        FROM territorial_groups g
-       ${where}
-       ORDER BY g.group_kind, g.label`,
+       ${wherePlain}
+       ORDER BY g.group_kind, g.label
+       LIMIT $${limIdx} OFFSET $${offIdx}`,
       params
     );
 
@@ -197,7 +310,9 @@ router.get('/:id', async (req, res, next) => {
     const clause = resolveGroupClause(req.params.id, params);
 
     const { rows: groups } = await db.query(
-      `SELECT g.id, g.slug, g.label, g.group_kind, g.notes, g.valid_from, g.valid_to, g.created_at
+      `SELECT g.id, g.slug, g.label, g.group_kind, g.notes,
+              g.valid_from, g.valid_to, g.created_at,
+              g.source_name, g.source_url, g.reference_year, g.external_id, g.is_demo
        FROM territorial_groups g
        WHERE ${clause}`,
       params

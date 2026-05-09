@@ -78,16 +78,39 @@ async function fetchText(url) {
   return await res.text();
 }
 
-async function upsertGroup(client, { slug, label, kind, notes }) {
+const SOURCE_NAME_TOSCANA = 'dati-toscana-comuni-funzione-statistica';
+const SOURCE_URL_TOSCANA =
+  'https://dati.toscana.it/dataset/comuni-della-toscana-con-funzione-statistica-associata-per-statuto-al-01-01-2024';
+
+async function upsertGroup(
+  client,
+  { slug, label, kind, notes, source_name, source_url, reference_year, external_id }
+) {
   const { rows } = await client.query(
-    `INSERT INTO territorial_groups (slug, label, group_kind, notes)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO territorial_groups (
+       slug, label, group_kind, notes,
+       source_name, source_url, reference_year, external_id, is_demo
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false)
      ON CONFLICT (slug) DO UPDATE
        SET label = EXCLUDED.label,
            group_kind = EXCLUDED.group_kind,
-           notes = EXCLUDED.notes
+           notes = EXCLUDED.notes,
+           source_name = EXCLUDED.source_name,
+           source_url = EXCLUDED.source_url,
+           reference_year = EXCLUDED.reference_year,
+           external_id = COALESCE(EXCLUDED.external_id, territorial_groups.external_id)
      RETURNING id`,
-    [slug, label, kind, notes]
+    [
+      slug,
+      label,
+      kind,
+      notes,
+      source_name,
+      source_url,
+      reference_year,
+      external_id,
+    ]
   );
   return rows[0].id;
 }
@@ -159,21 +182,24 @@ async function main() {
   try {
     await client.query('BEGIN');
 
-    let created = 0;
-    let updated = 0;
     let totalMembers = 0;
 
     for (const { label, members } of unions.values()) {
       const slug = `toscana-${slugify(label)}`;
       const kind = inferKind(label);
       const notes = 'Fonte: Regione Toscana Open Data (dataset funzione statistica associata, agg. 01/01/2024).';
+      const externalId = slug.startsWith('toscana-') ? slug.slice('toscana-'.length) : slug;
 
-      const groupId = await upsertGroup(client, { slug, label, kind, notes });
-
-      // Controllo best-effort se il gruppo esisteva già
-      const { rows: existsRows } = await client.query('SELECT 1 FROM territorial_groups WHERE id = $1', [groupId]);
-      if (existsRows.length) updated++;
-      else created++;
+      const groupId = await upsertGroup(client, {
+        slug,
+        label,
+        kind,
+        notes,
+        source_name: SOURCE_NAME_TOSCANA,
+        source_url: SOURCE_URL_TOSCANA,
+        reference_year: 2024,
+        external_id: externalId,
+      });
 
       const proComs = [...members.values()].sort((a, b) => a - b);
       totalMembers += proComs.length;
