@@ -237,6 +237,108 @@ main {
   flex: 0 0 auto;
 }
 
+/* Filtro tipologie EUAP (vista Parchi) */
+.park-type-panel {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.park-type-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.park-type-panel-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.park-type-reset {
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.park-type-reset:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.park-type-empty {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.park-type-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: min(42vh, 320px);
+  overflow-y: auto;
+}
+
+.park-type-row {
+  display: grid;
+  grid-template-columns: 16px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.6);
+  cursor: pointer;
+}
+
+.park-type-row:last-child {
+  border-bottom: none;
+}
+
+.park-type-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  border: 1px solid rgba(15, 23, 42, 0.45);
+}
+
+.park-type-main {
+  min-width: 0;
+}
+
+.park-type-sigla {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.park-type-name {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.25;
+}
+
+.park-type-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  padding-right: 4px;
+}
+
+.park-type-row input[type='checkbox'] {
+  flex-shrink: 0;
+}
+
 th.col-l131,
 td.col-l131 {
   width: 3.25rem;

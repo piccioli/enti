@@ -48,6 +48,14 @@
           <button type="button" class="segment-btn" id="btn-search-parchi" aria-pressed="false">Parchi</button>
         </div>
       </div>
+
+      <div id="park-type-panel" class="park-type-panel hidden" aria-label="Filtro tipologie EUAP sulla mappa">
+        <div class="park-type-panel-head">
+          <span class="park-type-panel-title">Tipologie EUAP (mappa)</span>
+          <button type="button" class="park-type-reset" id="btn-park-types-all" title="Attiva tutte">Tutte</button>
+        </div>
+        <div id="park-type-list" class="park-type-list"></div>
+      </div>
       <div class="filter-row">
         <input id="search-input" type="text" placeholder="Cerca comune..." autocomplete="off" />
         <button class="btn-reset" id="btn-reset" title="Azzera filtri">✕ Reset</button>

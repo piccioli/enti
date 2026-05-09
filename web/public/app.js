@@ -15,6 +15,8 @@ const state = {
   /** 'comuni' | 'parchi' */
   searchMode: 'comuni',
   selectedProtectedId: null,
+  /** Tipologia EUAP → visibile (`false` = nascosta dalla mappa). Chiave assente = visibile. */
+  parkTypeChecked: {},
 };
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
@@ -47,6 +49,9 @@ const groupDetail  = document.getElementById('group-detail');
 const theadMain = document.getElementById('thead-main');
 const btnSearchComuni = document.getElementById('btn-search-comuni');
 const btnSearchParchi = document.getElementById('btn-search-parchi');
+const parkTypePanel = document.getElementById('park-type-panel');
+const parkTypeList = document.getElementById('park-type-list');
+const btnParkTypesAll = document.getElementById('btn-park-types-all');
 
 const btnSoftwareInfo = document.getElementById('btn-software-info');
 const softwareModal = document.getElementById('software-modal');
@@ -147,6 +152,191 @@ let regionsGeoCache   = null;
 let provincesGeoCache = null;
 let groupingLayer     = null;
 let protectedAreasLayer = null;
+/** Ultimo GeoJSON aree protette caricato (per filtri tipologia senza nuova richiesta). */
+let protectedAreasGeoCache = null;
+
+/** Ordine elenco pannello tipologie (il resto in coda, alfabetico; senza tipologia per ultima). */
+const PARK_TYPE_ORDER = ['PNZ', 'PNZ_m', 'PNR', 'RNS', 'RNR', 'GAPN', 'AANP', 'MAR'];
+
+/** Sigla EUAP → nome descrittivo e colore riempimento mappa (stroke derivato). */
+const PARK_TYPE_META = {
+  PNZ: { name: 'Parco nazionale (terrestre)', color: '#166534' },
+  PNZ_m: { name: 'Parco nazionale marino', color: '#0f766e' },
+  PNR: { name: 'Parco naturale regionale', color: '#1d4ed8' },
+  RNS: { name: 'Riserva naturale statale', color: '#b91c1c' },
+  RNR: { name: 'Riserva naturale regionale', color: '#ea580c' },
+  GAPN: { name: 'Area protetta nazionale (es. sottomarina)', color: '#7c3aed' },
+  AANP: { name: 'Altra area naturale protetta', color: '#c026d3' },
+  MAR: { name: 'Area marina protetta / riserva marina', color: '#0369a1' },
+  '': { name: '(Senza tipologia)', color: '#64748b' },
+};
+
+function metaForParkType(code) {
+  const k = code === undefined || code === null ? '' : String(code).trim();
+  if (Object.prototype.hasOwnProperty.call(PARK_TYPE_META, k)) return PARK_TYPE_META[k];
+  if (!k) return PARK_TYPE_META[''];
+  return { name: `Tipologia ${k}`, color: fallbackParkColor(k) };
+}
+
+function fallbackParkColor(code) {
+  const fb = ['#f43f5e', '#8b5cf6', '#06b6d4', '#eab308', '#fb7185', '#34d399', '#f97316'];
+  let h = 0;
+  const s = String(code || '?');
+  for (let i = 0; i < s.length; i++) h += s.charCodeAt(i);
+  return fb[h % fb.length];
+}
+
+function parkTypeKey(props) {
+  const t = props && props.area_type;
+  if (t == null || String(t).trim() === '') return '';
+  return String(t).trim();
+}
+
+function darkenStroke(fillHex) {
+  try {
+    const n = fillHex.replace('#', '');
+    const hex = n.length === 3
+      ? n.split('').map((c) => c + c).join('')
+      : n;
+    const num = parseInt(hex, 16);
+    const factor = 0.52;
+    const r = Math.round(((num >> 16) & 255) * factor);
+    const g = Math.round(((num >> 8) & 255) * factor);
+    const b = Math.round((num & 255) * factor);
+    return '#' + [r, g, b].map((x) => x.toString(16).padStart(2, '0')).join('');
+  } catch {
+    return '#0f172a';
+  }
+}
+
+function protectedAreaStyleForFeature(feature) {
+  const k = parkTypeKey(feature.properties);
+  const meta = metaForParkType(k);
+  const fill = meta.color;
+  return {
+    color: darkenStroke(fill),
+    fillColor: fill,
+    weight: 1.25,
+    opacity: 0.92,
+    fillOpacity: 0.32,
+    lineJoin: 'round',
+  };
+}
+
+function countParkTypesInGeojson(fc) {
+  const m = {};
+  for (const f of fc.features || []) {
+    const k = parkTypeKey(f.properties);
+    m[k] = (m[k] || 0) + 1;
+  }
+  return m;
+}
+
+function parkTypeDataAttr(code) {
+  return code === '' ? '__empty__' : code;
+}
+
+function parseParkTypeDataAttr(raw) {
+  return raw === '__empty__' ? '' : String(raw || '');
+}
+
+function escAttr(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;');
+}
+
+function syncParkTypePanelFromGeojson(fc) {
+  const counts = countParkTypesInGeojson(fc);
+  for (const k of Object.keys(counts)) {
+    if (!Object.prototype.hasOwnProperty.call(state.parkTypeChecked, k)) {
+      state.parkTypeChecked[k] = true;
+    }
+  }
+  renderParkTypePanel(counts);
+}
+
+function compareParkTypePanelEntries(a, b) {
+  const ka = a[0];
+  const kb = b[0];
+  const ia = PARK_TYPE_ORDER.indexOf(ka);
+  const ib = PARK_TYPE_ORDER.indexOf(kb);
+  if (ia !== -1 && ib !== -1) return ia - ib;
+  if (ia !== -1) return -1;
+  if (ib !== -1) return 1;
+  if (ka === '' && kb === '') return 0;
+  if (ka === '') return 1;
+  if (kb === '') return -1;
+  return ka.localeCompare(kb, 'it');
+}
+
+function renderParkTypePanel(counts) {
+  if (!parkTypeList) return;
+  const entries = Object.entries(counts).sort(compareParkTypePanelEntries);
+  if (!entries.length) {
+    parkTypeList.innerHTML = '<p class="park-type-empty">Nessuna area in questo ambito.</p>';
+    return;
+  }
+  const parts = [];
+  for (const [code, n] of entries) {
+    const meta = metaForParkType(code);
+    const checked = state.parkTypeChecked[code] !== false;
+    const sigla = code ? esc(code) : '—';
+    const dt = parkTypeDataAttr(code);
+    parts.push(
+      `<label class="park-type-row" data-park-type="${escAttr(dt)}">` +
+        `<span class="park-type-swatch" style="background:${esc(meta.color)}"></span>` +
+        `<div class="park-type-main">` +
+          `<div class="park-type-sigla">${sigla}</div>` +
+          `<div class="park-type-name">${esc(meta.name)}</div>` +
+        `</div>` +
+        `<span class="park-type-count">${Number(n).toLocaleString('it-IT')}</span>` +
+        `<input type="checkbox" ${checked ? 'checked' : ''} aria-label="Mostra tipologia ${sigla} sulla mappa" />` +
+      `</label>`
+    );
+  }
+  parkTypeList.innerHTML = parts.join('');
+}
+
+function rebuildProtectedAreasLayer() {
+  protectedAreasLayer = clearLayer(protectedAreasLayer);
+  if (!protectedAreasGeoCache || state.searchMode !== 'parchi') return;
+  const feats = (protectedAreasGeoCache.features || []).filter((f) => {
+    const k = parkTypeKey(f.properties);
+    return state.parkTypeChecked[k] !== false;
+  });
+  if (!feats.length) return;
+  const fc = { type: 'FeatureCollection', features: feats };
+  protectedAreasLayer = L.geoJSON(fc, {
+    style: protectedAreaStyleForFeature,
+    onEachFeature: (feat, lyr) => {
+      lyr.on('click', () => onProtectedAreaMapClick(feat.properties));
+    },
+  }).addTo(map);
+  if (protectedAreasLayer.bringToFront) protectedAreasLayer.bringToFront();
+}
+
+function clearParkHighlightIfHidden() {
+  if (state.selectedProtectedId == null || !protectedAreasGeoCache) return;
+  const feat = protectedAreasGeoCache.features.find(
+    (f) => f.properties.id === state.selectedProtectedId
+  );
+  if (!feat) return;
+  const k = parkTypeKey(feat.properties);
+  if (state.parkTypeChecked[k] === false) {
+    highlightLayer = clearLayer(highlightLayer);
+    state.selectedProtectedId = null;
+    document.querySelectorAll('#tbody tr.selected').forEach((tr) => tr.classList.remove('selected'));
+  }
+}
+
+function visibleParkFeaturesForBounds(gj) {
+  return (gj.features || []).filter((f) => {
+    const k = parkTypeKey(f.properties);
+    return state.parkTypeChecked[k] !== false;
+  });
+}
 
 const THEAD_COMUNI_ROW = `
   <tr>
@@ -266,6 +456,7 @@ function applySearchModeChrome() {
   const exBar = document.getElementById('export-bar');
   if (exBar) exBar.classList.toggle('hidden', !isCom);
   if (filterRowProv) filterRowProv.classList.toggle('hidden', !isCom);
+  if (parkTypePanel) parkTypePanel.classList.toggle('hidden', isCom);
 }
 
 async function refreshAdministrativeAreas() {
@@ -274,6 +465,11 @@ async function refreshAdministrativeAreas() {
   highlightLayer = clearLayer(highlightLayer);
   state.selectedProCom = null;
   state.selectedProtectedId = null;
+
+  if (state.searchMode !== 'parchi') {
+    protectedAreasGeoCache = null;
+    if (parkTypeList) parkTypeList.innerHTML = '';
+  }
 
   if (state.group) {
     return;
@@ -297,20 +493,19 @@ async function refreshAdministrativeAreas() {
       ? `/api/protected-areas/geojson?reg=${state.reg}`
       : '/api/protected-areas/geojson';
     const gj = await apiFetch(gjUrl);
-    protectedAreasLayer = L.geoJSON(gj, {
-      style: () => style.protectedArea,
-      onEachFeature: (feat, lyr) => {
-        lyr.on('click', () => onProtectedAreaMapClick(feat.properties));
-      },
-    }).addTo(map);
-    if (protectedAreasLayer.bringToFront) {
-      protectedAreasLayer.bringToFront();
-    }
-    if (protectedAreasLayer.getBounds().isValid()) {
-      map.fitBounds(protectedAreasLayer.getBounds(), {
-        padding: [20, 20],
-        maxZoom: state.reg ? 12 : 8,
-      });
+    protectedAreasGeoCache = gj;
+    syncParkTypePanelFromGeojson(gj);
+    rebuildProtectedAreasLayer();
+
+    const visibleFeats = visibleParkFeaturesForBounds(gj);
+    if (visibleFeats.length) {
+      const tmpBounds = L.geoJSON({ type: 'FeatureCollection', features: visibleFeats });
+      if (tmpBounds.getBounds().isValid()) {
+        map.fitBounds(tmpBounds.getBounds(), {
+          padding: [20, 20],
+          maxZoom: state.reg ? 12 : 8,
+        });
+      }
     } else if (regionsLayer && regionsLayer.getBounds().isValid()) {
       map.fitBounds(regionsLayer.getBounds(), { padding: [28, 28], maxZoom: 8 });
     }
@@ -769,10 +964,36 @@ btnReset.addEventListener('click', async () => {
     console.warn(e);
   }
 
+  state.parkTypeChecked = {};
   renderRegionsLayer();
   map.setView([42.5, 12.5], 6);
-  loadMainList();
+  await refreshAdministrativeAreas();
+  await loadMainList();
 });
+
+if (parkTypeList) {
+  parkTypeList.addEventListener('change', (e) => {
+    const t = e.target;
+    if (!t || t.type !== 'checkbox') return;
+    const lab = t.closest('label.park-type-row');
+    if (!lab || !lab.dataset) return;
+    const key = parseParkTypeDataAttr(lab.dataset.parkType);
+    state.parkTypeChecked[key] = t.checked;
+    rebuildProtectedAreasLayer();
+    clearParkHighlightIfHidden();
+  });
+}
+
+if (btnParkTypesAll) {
+  btnParkTypesAll.addEventListener('click', () => {
+    state.parkTypeChecked = {};
+    if (protectedAreasGeoCache) {
+      syncParkTypePanelFromGeojson(protectedAreasGeoCache);
+      rebuildProtectedAreasLayer();
+      clearParkHighlightIfHidden();
+    }
+  });
+}
 
 // ── Map click handlers ───────────────────────────────────────────────────────
 function onRegionClick(props) {
