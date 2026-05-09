@@ -55,11 +55,11 @@ docker compose run --rm \
   "set -euo pipefail; \
    echo 'Downloading: ${ANCI_UNIONI_PDF_URL}'; \
    curl -L '${ANCI_UNIONI_PDF_URL}' -o /data/anci-unioni-2023.pdf; \
-   pdftotext -layout /data/anci-unioni-2023.pdf /data/anci-unioni-2023.txt"
+   pdftotext /data/anci-unioni-2023.pdf /data/anci-unioni-2023.txt"
 
 docker compose run --rm \
   -v "${TMP_DATA}:/data:ro" \
-  api node scripts/import_italy_unioni_anci_2023.js --file /data/anci-unioni-2023.txt
+  api node scripts/import_italy_unioni_anci_2023.js --format columns --file /data/anci-unioni-2023.txt
 
 docker compose run --rm \
   -e DATAPACK_DIR=/datapack \

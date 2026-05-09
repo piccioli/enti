@@ -27,11 +27,12 @@ const SOURCE_URL = 'https://www.anci.it/wp-content/uploads/Elenco-Unioni-di-Comu
 const REFERENCE_YEAR = 2023;
 
 function parseArgs(argv) {
-  const out = { file: '', append: false };
+  const out = { file: '', append: false, format: 'auto' };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--append') out.append = true;
     else if (a === '--file') out.file = argv[++i];
+    else if (a === '--format') out.format = String(argv[++i] || '').trim() || 'auto';
   }
   return out;
 }
@@ -144,6 +145,8 @@ function parseLayoutRecordLines(raw) {
   /** @type {string[]} */
   const out = [];
   let buf = '';
+  /** @type {string[]} */
+  let pendingTitle = [];
 
   const isJunk = (s) =>
     /^denominazione\b/i.test(s) ||
@@ -153,14 +156,35 @@ function parseLayoutRecordLines(raw) {
     /^tot\./i.test(s) ||
     /\btotale\b/i.test(s);
 
-  for (const l of lines) {
+  for (let idx = 0; idx < lines.length; idx++) {
+    const l = lines[idx];
     if (isJunk(l)) continue;
     if (/^\d+\s+\S+/.test(l)) {
       if (buf) out.push(buf.replace(/\s+/g, ' ').trim());
-      buf = l;
+      const prefix = pendingTitle.length ? pendingTitle.join(' ').replace(/\s+/g, ' ').trim() : '';
+      pendingTitle = [];
+      // Inserisce eventuale prefisso *subito dopo* l'indice numerico, così il parsing successivo
+      // trova correttamente "label ... <REGIONE> <PROVINCIA> ..."
+      buf = prefix ? l.replace(/^(\d+\s+)/, `$1${prefix} `) : l;
       continue;
     }
+    const next = idx + 1 < lines.length ? lines[idx + 1] : '';
+    const looksLikeTitleOnly =
+      /(unione|comunit)/i.test(l) && !l.includes(',') && /^\d+\s+\S+/.test(next);
+
+    // Caso tipico del PDF: una riga "solo titolo" precede l'indice numerico del record successivo.
+    // Non deve essere appesa al record precedente (altrimenti il record successivo resta senza label).
+    if (looksLikeTitleOnly) {
+      pendingTitle.push(l);
+      if (pendingTitle.length > 3) pendingTitle = pendingTitle.slice(-3);
+      continue;
+    }
+
     if (buf) buf = `${buf} ${l}`;
+    else {
+      pendingTitle.push(l);
+      if (pendingTitle.length > 3) pendingTitle = pendingTitle.slice(-3);
+    }
   }
   if (buf) out.push(buf.replace(/\s+/g, ' ').trim());
   return out;
@@ -219,7 +243,7 @@ async function appendMembers(client, groupId, proComs) {
 }
 
 async function main() {
-  const { file, append } = parseArgs(process.argv);
+  const { file, append, format } = parseArgs(process.argv);
   if (!file) {
     console.error('Uso: node scripts/import_italy_unioni_anci_2023.js --file /path/file.txt [--append]');
     process.exitCode = 1;
@@ -240,10 +264,14 @@ async function main() {
 
     const raw = await fs.readFile(file, 'utf8');
     const hasLayoutStyle = /^\d+\s+\S+/m.test(raw);
-    const layoutLines = hasLayoutStyle ? parseLayoutRecordLines(raw) : [];
-    const records = hasLayoutStyle ? [] : parseAnciPdftotext(raw, regionNames, provinceNames);
+    const forceColumns = format === 'columns' || format === 'col' || format === 'table';
+    const forceLayout = format === 'layout';
+    const useLayout = forceLayout || (!forceColumns && hasLayoutStyle);
+
+    const layoutLines = useLayout ? parseLayoutRecordLines(raw) : [];
+    const records = useLayout ? [] : parseAnciPdftotext(raw, regionNames, provinceNames);
     console.log(
-      hasLayoutStyle
+      useLayout
         ? `Letti ${layoutLines.length} record grezzi (layout) da ${file}`
         : `Letti ${records.length} record grezzi (colonne) da ${file}`
     );
@@ -280,17 +308,29 @@ async function main() {
 
     await client.query('BEGIN');
 
+    if (!append) {
+      // Modalità "replace": rimuove tutte le righe della stessa fonte,
+      // così non restano in DB gruppi vecchi (es. label vuote da parsing precedente).
+      await client.query(
+        `DELETE FROM territorial_group_members m
+         USING territorial_groups g
+         WHERE m.group_id = g.id AND g.source_name = $1`,
+        [SOURCE_NAME]
+      );
+      await client.query(`DELETE FROM territorial_groups WHERE source_name = $1`, [SOURCE_NAME]);
+    }
+
     let okGroups = 0;
     let okMembers = 0;
     let skippedGroups = 0;
 
-    for (const r of hasLayoutStyle ? layoutLines : records) {
+    for (const r of useLayout ? layoutLines : records) {
       let label = '';
       let region = '';
       let prov = '';
       let comuniBlob = '';
 
-      if (hasLayoutStyle) {
+      if (useLayout) {
         const s = String(r).replace(/^\d+\s+/, '').trim();
         region = findEarliestMatch(s, regionNames) || '';
         if (!region) {
@@ -323,6 +363,12 @@ async function main() {
         console.warn(`SKIP: cod_prov non trovato per provincia "${prov}"`);
         skippedGroups++;
         continue;
+      }
+
+      if (!label) {
+        // Non bloccare l'import: assegna un nome di fallback (meglio di label vuota in UI/datapack).
+        // Tentiamo comunque a popolare i membri; se anche i membri risultano vuoti, verrà skippato dopo.
+        label = `Raggruppamento (${region} - ${prov})`;
       }
 
       if (!comuniBlob) {
