@@ -65,27 +65,23 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-/** FeatureCollection leggere per la mappa (filtro regione o provincia obbligatorio). */
+/** FeatureCollection per la mappa. Senza parametri: tutte le aree (es. vista Italia). Con reg/prov: filtro spaziale. */
 router.get('/geojson', async (req, res, next) => {
   try {
     const prov = req.query.prov ? parseInt(req.query.prov, 10) : null;
     const reg = req.query.reg ? parseInt(req.query.reg, 10) : null;
 
-    if (!prov && !reg) {
-      return res.status(400).json({ error: 'At least one of prov or reg is required' });
-    }
-
-    let where;
+    let whereClause = '';
     const params = [];
     if (prov != null && !Number.isNaN(prov)) {
       params.push(prov);
-      where = `EXISTS (
+      whereClause = `WHERE EXISTS (
         SELECT 1 FROM provinces pr
         WHERE pr.cod_prov = $1 AND ST_Intersects(p.geom, pr.geom)
       )`;
-    } else {
+    } else if (reg != null && !Number.isNaN(reg)) {
       params.push(reg);
-      where = `EXISTS (
+      whereClause = `WHERE EXISTS (
         SELECT 1 FROM regions r
         WHERE r.cod_reg = $1 AND ST_Intersects(p.geom, r.geom)
       )`;
@@ -104,7 +100,7 @@ router.get('/geojson', async (req, res, next) => {
         'geometry', ST_AsGeoJSON(p.geom)::json
       ) AS feature
       FROM protected_areas p
-      WHERE ${where}
+      ${whereClause}
       ORDER BY p.name
       `,
       params

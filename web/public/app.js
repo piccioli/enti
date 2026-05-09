@@ -104,6 +104,14 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 const style = {
   region:       { color: '#3b82f6', weight: 1.5, fillColor: '#3b82f6', fillOpacity: 0.06 },
+  /** Vista Parchi: solo confini regionali, senza riempimento (no click). */
+  regionOutline: {
+    color: '#64748b',
+    weight: 1.25,
+    fillOpacity: 0,
+    opacity: 0.9,
+    lineJoin: 'round',
+  },
   province:     { color: '#8b5cf6', weight: 1.5, fillColor: '#8b5cf6', fillOpacity: 0.08 },
   municipality: { color: '#06b6d4', weight: 1,   fillColor: '#06b6d4', fillOpacity: 0.10 },
   /** Layer parchi (sotto i comuni quando entrambi attivi — qui sostituisce il layer comunale in modalità Parchi). */
@@ -175,25 +183,30 @@ function featCodProv(f) {
   return typeof cp === 'number' ? cp : parseInt(String(cp), 10);
 }
 
-/** Mostra tutte le regioni oppure solo quella selezionata in `state.reg`.
- *  In modalità Parchi il layer non è cliccabile così i click raggiungono i poligoni EUAP sopra.
+/** Comuni: tutte le regioni o solo quella selezionata (poligoni colorati, click).
+ *  Parchi: sempre tutti i confini regionali, solo contorno, mai interattivi (i click vanno agli EUAP).
  */
 function renderRegionsLayer() {
   regionsLayer = clearLayer(regionsLayer);
   if (!regionsGeoCache) return;
   const all = regionsGeoCache.features || [];
+  if (state.searchMode === 'parchi') {
+    const collection = { type: 'FeatureCollection', features: all };
+    regionsLayer = L.geoJSON(collection, {
+      style: () => style.regionOutline,
+      interactive: false,
+    }).addTo(map);
+    return;
+  }
   const features = state.reg == null
     ? all
     : all.filter((f) => featCodReg(f) === state.reg);
   const collection = { type: 'FeatureCollection', features };
-  const regionClickable = state.searchMode !== 'parchi';
   regionsLayer = L.geoJSON(collection, {
     style: () => style.region,
-    interactive: regionClickable,
+    interactive: true,
     onEachFeature: (feat, layer) => {
-      if (regionClickable) {
-        layer.on('click', () => onRegionClick(feat.properties));
-      }
+      layer.on('click', () => onRegionClick(feat.properties));
     },
   }).addTo(map);
 }
@@ -280,11 +293,10 @@ async function refreshAdministrativeAreas() {
       return;
     }
 
-    if (!state.reg) {
-      return;
-    }
-
-    const gj = await apiFetch(`/api/protected-areas/geojson?reg=${state.reg}`);
+    const gjUrl = state.reg
+      ? `/api/protected-areas/geojson?reg=${state.reg}`
+      : '/api/protected-areas/geojson';
+    const gj = await apiFetch(gjUrl);
     protectedAreasLayer = L.geoJSON(gj, {
       style: () => style.protectedArea,
       onEachFeature: (feat, lyr) => {
@@ -294,8 +306,13 @@ async function refreshAdministrativeAreas() {
     if (protectedAreasLayer.bringToFront) {
       protectedAreasLayer.bringToFront();
     }
-    if (regionsLayer && regionsLayer.getBounds().isValid()) {
-      map.fitBounds(regionsLayer.getBounds(), { padding: [36, 36] });
+    if (protectedAreasLayer.getBounds().isValid()) {
+      map.fitBounds(protectedAreasLayer.getBounds(), {
+        padding: [20, 20],
+        maxZoom: state.reg ? 12 : 8,
+      });
+    } else if (regionsLayer && regionsLayer.getBounds().isValid()) {
+      map.fitBounds(regionsLayer.getBounds(), { padding: [28, 28], maxZoom: 8 });
     }
   } catch (e) {
     console.warn('refreshAdministrativeAreas:', e);
@@ -354,8 +371,9 @@ async function loadProtectedAreas() {
     renderTableProtected(data.items || []);
     renderPagination();
     resultCount.textContent = `${state.total.toLocaleString('it-IT')} aree protette`;
-    resultHint.textContent =
-      state.reg ? '' : 'Seleziona una regione per vedere tutti i parchi della regione sulla mappa';
+    resultHint.textContent = state.reg
+      ? ''
+      : 'Mappa: tutte le aree protette. Filtra per regione dal menu per restringere elenco e zoom.';
     emptyState.classList.toggle('hidden', data.items.length > 0);
   } catch (e) {
     console.warn('Liste aree protette non disponibili:', e);
