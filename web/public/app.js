@@ -175,7 +175,9 @@ function featCodProv(f) {
   return typeof cp === 'number' ? cp : parseInt(String(cp), 10);
 }
 
-/** Mostra tutte le regioni oppure solo quella selezionata in `state.reg`. */
+/** Mostra tutte le regioni oppure solo quella selezionata in `state.reg`.
+ *  In modalità Parchi il layer non è cliccabile così i click raggiungono i poligoni EUAP sopra.
+ */
 function renderRegionsLayer() {
   regionsLayer = clearLayer(regionsLayer);
   if (!regionsGeoCache) return;
@@ -184,7 +186,16 @@ function renderRegionsLayer() {
     ? all
     : all.filter((f) => featCodReg(f) === state.reg);
   const collection = { type: 'FeatureCollection', features };
-  regionsLayer = makeGeoLayer(collection, style.region, onRegionClick).addTo(map);
+  const regionClickable = state.searchMode !== 'parchi';
+  regionsLayer = L.geoJSON(collection, {
+    style: () => style.region,
+    interactive: regionClickable,
+    onEachFeature: (feat, layer) => {
+      if (regionClickable) {
+        layer.on('click', () => onRegionClick(feat.properties));
+      }
+    },
+  }).addTo(map);
 }
 
 /** Province della regione corrente: tutte se `state.prov` è null, altrimenti solo quella selezionata. In modalità Parchi non si disegnano. */
@@ -280,9 +291,9 @@ async function refreshAdministrativeAreas() {
         lyr.on('click', () => onProtectedAreaMapClick(feat.properties));
       },
     }).addTo(map);
-    protectedAreasLayer.eachLayer((lyr) => {
-      if (lyr.bringToBack) lyr.bringToBack();
-    });
+    if (protectedAreasLayer.bringToFront) {
+      protectedAreasLayer.bringToFront();
+    }
     if (regionsLayer && regionsLayer.getBounds().isValid()) {
       map.fitBounds(regionsLayer.getBounds(), { padding: [36, 36] });
     }
@@ -313,6 +324,7 @@ async function setSearchMode(mode) {
 
   applyTheadForMode();
   applySearchModeChrome();
+  renderRegionsLayer();
   if (next === 'comuni' && state.reg && provincesGeoCache) {
     renderProvincesLayer();
   }
