@@ -23,6 +23,7 @@ app.use('/api/groups', require('./routes/groups'));
 app.use('/api/regions', require('./routes/regions'));
 app.use('/api/provinces', require('./routes/provinces'));
 app.use('/api/municipalities', require('./routes/municipalities'));
+app.use('/api/protected-areas', require('./routes/protected_areas'));
 
 app.use((err, req, res, _next) => {
   console.error(err);

@@ -1,13 +1,13 @@
 # TODO — idee e miglioramenti
 
-Note operative da tenere in backlog (priorità non definita).
 
 ## 2. Dati — parchi e aree protette
 
 - **Fonti**: Incorporare dataset istituzionali (es. repertorio aree protette / EUAP — verificare licenza e aggiornamento periodico).
 - **Schema**: nuova tabella `protected_areas` (codice, nome, tipologia, geometria MultiPolygon) + eventuale tabella di associazione `municipality_protected_area` (intersezione o centoroide nel parco).
-- **Loader**: script dedicato (shapefile/GeoJSON → PostGIS) e inclusione nel datapack come layer separato (`protected_areas.geojson`).
+- **Stack datapack (obbligatorio)**: l’import non è ad-hoc a runtime; avviene durante `scripts/datapack_build_from_sources.sh` (stesso approccio “snapshot” della build: shapefile/GeoJSON di sorgente → normalizzazione → PostGIS + export nel datapack come layer separato `protected_areas.geojson`, eventuali entry nel `manifest.json`). Eventuale logica lunga può stare in uno script helper invocato da quella pipeline, ma l’ingresso ufficiale resta la build datapack.
 - **Mappe**: layer toggle “parchi” con opacità e ordine z-index sotto ai confini comunali se serve leggibilità.
+- **Ricerca (mappa)**: nell’interfaccia di ricerca associata alla mappa, uno **switch** (o controllo equivalente, es. segment) che commuta tra ambito **comuni** e **parchi**; suggerimenti/autocomplete, risultato selezionato, evidenziazione sulla mappa e popup/dettaglio devono seguire l’entità attiva. Lato backend: estendere o affiancare gli endpoint di ricerca esistenti con ricerca su `protected_areas` quando la modalità è “parchi” (coerente con i campi esposti in lista/API).
 
 ## 4. Integrazione con i sentieri del Catasto REI
 

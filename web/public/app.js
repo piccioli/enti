@@ -12,16 +12,22 @@ const state = {
   page: 0,
   total: 0,
   selectedProCom: null,
+  /** 'comuni' | 'parchi' */
+  searchMode: 'comuni',
+  selectedProtectedId: null,
 };
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 const selReg       = document.getElementById('sel-reg');
 const selProv      = document.getElementById('sel-prov');
+const filterRowProv = document.getElementById('filter-row-prov');
 const searchInput  = document.getElementById('search-input');
 const btnReset     = document.getElementById('btn-reset');
 const chkMontanoL131 = document.getElementById('chk-montano-l131');
 const chkHasContacts = document.getElementById('chk-has-contacts');
-const chkAll       = document.getElementById('chk-all');
+function chkAllEl() {
+  return document.getElementById('chk-all');
+}
 const selCountEl   = document.getElementById('sel-count');
 const btnExportPng = document.getElementById('btn-export-png');
 const btnExportPdf = document.getElementById('btn-export-pdf');
@@ -38,6 +44,9 @@ const dbLabel      = document.getElementById('db-label');
 const selGroupKind = document.getElementById('sel-group-kind');
 const selGroup     = document.getElementById('sel-group');
 const groupDetail  = document.getElementById('group-detail');
+const theadMain = document.getElementById('thead-main');
+const btnSearchComuni = document.getElementById('btn-search-comuni');
+const btnSearchParchi = document.getElementById('btn-search-parchi');
 
 const btnSoftwareInfo = document.getElementById('btn-software-info');
 const softwareModal = document.getElementById('software-modal');
@@ -97,6 +106,15 @@ const style = {
   region:       { color: '#3b82f6', weight: 1.5, fillColor: '#3b82f6', fillOpacity: 0.06 },
   province:     { color: '#8b5cf6', weight: 1.5, fillColor: '#8b5cf6', fillOpacity: 0.08 },
   municipality: { color: '#06b6d4', weight: 1,   fillColor: '#06b6d4', fillOpacity: 0.10 },
+  /** Layer parchi (sotto i comuni quando entrambi attivi — qui sostituisce il layer comunale in modalità Parchi). */
+  protectedArea: {
+    color: '#15803d',
+    weight: 1,
+    opacity: 0.9,
+    fillColor: '#22c55e',
+    fillOpacity: 0.2,
+    lineJoin: 'round',
+  },
   // Layer evidenziato: comuni appartenenti al raggruppamento selezionato
   municipalityGroup: {
     color: '#16a34a',
@@ -120,6 +138,30 @@ let regionsGeoCache   = null;
 /** GeoJSON delle province della regione selezionata (`state.reg`). */
 let provincesGeoCache = null;
 let groupingLayer     = null;
+let protectedAreasLayer = null;
+
+const THEAD_COMUNI_ROW = `
+  <tr>
+    <th class="col-check"><input id="chk-all" type="checkbox" aria-label="Seleziona tutti" /></th>
+    <th>Comune</th>
+    <th>Prov</th>
+    <th>Regione</th>
+    <th class="num">Abitanti</th>
+    <th class="num" title="Quota media sul territorio (m s.l.m., ISTAT–DEM Ispra). Passa sul valore per min/max.">Quota</th>
+    <th class="num col-l131" title="Comune montano ai sensi della L. 131/2025 (elenco ministeriale)">L.&nbsp;131</th>
+    <th class="col-pec" title="PEC presente (dati open data IPA/AgID)">PEC</th>
+    <th class="col-info" title="Almeno un contatto/CF/indirizzo valorizzato (IPA)">Info</th>
+    <th>Cod. ISTAT</th>
+  </tr>`;
+
+const THEAD_PARCHI_ROW = `
+  <tr>
+    <th>Area protetta</th>
+    <th>Tipologia</th>
+    <th>Codice</th>
+    <th class="num">Superficie</th>
+    <th class="num">ID</th>
+  </tr>`;
 
 function clearLayer(ref) { if (ref) map.removeLayer(ref); return null; }
 
@@ -145,9 +187,10 @@ function renderRegionsLayer() {
   regionsLayer = makeGeoLayer(collection, style.region, onRegionClick).addTo(map);
 }
 
-/** Province della regione corrente: tutte se `state.prov` è null, altrimenti solo quella selezionata. */
+/** Province della regione corrente: tutte se `state.prov` è null, altrimenti solo quella selezionata. In modalità Parchi non si disegnano. */
 function renderProvincesLayer() {
   provincesLayer = clearLayer(provincesLayer);
+  if (state.searchMode === 'parchi') return;
   if (!provincesGeoCache || state.reg == null) return;
   const all = provincesGeoCache.features || [];
   const features = state.prov == null
@@ -172,6 +215,221 @@ async function apiFetch(path) {
   const res = await fetch(API + path);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+}
+
+function applyTheadForMode() {
+  if (!theadMain) return;
+  theadMain.innerHTML = state.searchMode === 'comuni' ? THEAD_COMUNI_ROW : THEAD_PARCHI_ROW;
+}
+
+function applySearchModeChrome() {
+  const isCom = state.searchMode === 'comuni';
+  searchInput.placeholder = isCom ? 'Cerca comune...' : 'Cerca area protetta…';
+  if (btnSearchComuni && btnSearchParchi) {
+    btnSearchComuni.classList.toggle('segment-active', isCom);
+    btnSearchParchi.classList.toggle('segment-active', !isCom);
+    btnSearchComuni.setAttribute('aria-pressed', isCom ? 'true' : 'false');
+    btnSearchParchi.setAttribute('aria-pressed', !isCom ? 'true' : 'false');
+  }
+  if (chkMontanoL131 && chkMontanoL131.closest('.filter-row')) {
+    chkMontanoL131.closest('.filter-row').classList.toggle('hidden', !isCom);
+  }
+  if (chkHasContacts && chkHasContacts.closest('.filter-row')) {
+    chkHasContacts.closest('.filter-row').classList.toggle('hidden', !isCom);
+  }
+  selGroup.disabled = !isCom;
+  selGroupKind.disabled = !isCom;
+  const exBar = document.getElementById('export-bar');
+  if (exBar) exBar.classList.toggle('hidden', !isCom);
+  if (filterRowProv) filterRowProv.classList.toggle('hidden', !isCom);
+}
+
+async function refreshAdministrativeAreas() {
+  municipalsLayer = clearLayer(municipalsLayer);
+  protectedAreasLayer = clearLayer(protectedAreasLayer);
+  highlightLayer = clearLayer(highlightLayer);
+  state.selectedProCom = null;
+  state.selectedProtectedId = null;
+
+  if (state.group) {
+    return;
+  }
+
+  try {
+    if (state.searchMode === 'comuni') {
+      if (state.prov) {
+        const geoM = await apiFetch(`/api/municipalities/geojson?prov=${state.prov}`);
+        municipalsLayer = makeGeoLayer(geoM, style.municipality, onMunicipalityMapClick).addTo(map);
+        if (provincesLayer && provincesLayer.getBounds().isValid()) {
+          map.fitBounds(provincesLayer.getBounds(), { padding: [28, 28] });
+        }
+      } else if (state.reg && provincesLayer && provincesLayer.getBounds().isValid()) {
+        map.fitBounds(provincesLayer.getBounds(), { padding: [30, 30] });
+      }
+      return;
+    }
+
+    if (!state.reg) {
+      return;
+    }
+
+    const gj = await apiFetch(`/api/protected-areas/geojson?reg=${state.reg}`);
+    protectedAreasLayer = L.geoJSON(gj, {
+      style: () => style.protectedArea,
+      onEachFeature: (feat, lyr) => {
+        lyr.on('click', () => onProtectedAreaMapClick(feat.properties));
+      },
+    }).addTo(map);
+    protectedAreasLayer.eachLayer((lyr) => {
+      if (lyr.bringToBack) lyr.bringToBack();
+    });
+    if (regionsLayer && regionsLayer.getBounds().isValid()) {
+      map.fitBounds(regionsLayer.getBounds(), { padding: [36, 36] });
+    }
+  } catch (e) {
+    console.warn('refreshAdministrativeAreas:', e);
+  }
+}
+
+async function setSearchMode(mode) {
+  const next = mode === 'parchi' ? 'parchi' : 'comuni';
+  if (state.searchMode === next) return;
+  state.searchMode = next;
+  state.page = 0;
+  state.selectedProCom = null;
+  state.selectedProtectedId = null;
+  highlightLayer = clearLayer(highlightLayer);
+
+  if (next === 'parchi') {
+    state.group = null;
+    selGroup.value = '';
+    groupingLayer = clearLayer(groupingLayer);
+    resetGroupDetailEmpty();
+    clearSelection();
+    state.prov = null;
+    if (selProv) selProv.value = '';
+    provincesLayer = clearLayer(provincesLayer);
+  }
+
+  applyTheadForMode();
+  applySearchModeChrome();
+  if (next === 'comuni' && state.reg && provincesGeoCache) {
+    renderProvincesLayer();
+  }
+  await refreshAdministrativeAreas();
+  await loadMainList();
+}
+
+async function loadMainList() {
+  if (state.searchMode === 'comuni') await loadMunicipalities();
+  else await loadProtectedAreas();
+}
+
+async function loadProtectedAreas() {
+  const DEFAULT_EMPTY_MSG = 'Nessun risultato in elenco.';
+  emptyState.textContent = DEFAULT_EMPTY_MSG;
+
+  const params = new URLSearchParams({
+    limit: String(PAGE_SIZE),
+    offset: String(state.page * PAGE_SIZE),
+  });
+  if (state.reg) params.set('reg', state.reg);
+  if (state.q) params.set('q', state.q);
+
+  try {
+    const data = await apiFetch(`/api/protected-areas?${params}`);
+    state.total = data.total;
+    renderTableProtected(data.items || []);
+    renderPagination();
+    resultCount.textContent = `${state.total.toLocaleString('it-IT')} aree protette`;
+    resultHint.textContent =
+      state.reg ? '' : 'Seleziona una regione per vedere tutti i parchi della regione sulla mappa';
+    emptyState.classList.toggle('hidden', data.items.length > 0);
+  } catch (e) {
+    console.warn('Liste aree protette non disponibili:', e);
+    state.total = 0;
+    tbody.innerHTML = '';
+    renderPagination();
+    resultCount.textContent = '—';
+    resultHint.textContent = 'Tabella «aree protette» non presente sul database — applicare migrazione 013';
+    emptyState.textContent =
+      'Dati non disponibili (migrazione `db/migrations/013_protected_areas.sql` o dataset non importato).';
+    emptyState.classList.remove('hidden');
+  }
+}
+
+function renderTableProtected(items) {
+  emptyState.classList.toggle('hidden', items.length > 0);
+  tbody.innerHTML = '';
+
+  items.forEach((row) => {
+    const tr = document.createElement('tr');
+    tr.dataset.protectedId = String(row.id);
+    if (row.id === state.selectedProtectedId) tr.classList.add('selected');
+
+    const km =
+      row.area_km2 != null && Number.isFinite(parseFloat(row.area_km2))
+        ? parseFloat(row.area_km2).toFixed(1)
+        : '—';
+
+    tr.innerHTML = `
+      <td class="comune" title="${esc(row.name)}">${esc(row.name)}</td>
+      <td>${esc(row.area_type || '—')}</td>
+      <td class="code">${esc(row.external_code || '—')}</td>
+      <td class="num">${km}</td>
+      <td class="num">${row.id}</td>
+    `;
+    tr.addEventListener('click', () => {
+      selectProtectedArea(row.id);
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+async function selectProtectedArea(id) {
+  state.selectedProtectedId = id;
+  state.selectedProCom = null;
+
+  document.querySelectorAll('#tbody tr').forEach((tr) => tr.classList.remove('selected'));
+  const row = tbody.querySelector(`tr[data-protected-id="${String(id)}"]`);
+  if (row) {
+    row.classList.add('selected');
+    row.scrollIntoView({ block: 'nearest' });
+  }
+
+  highlightLayer = clearLayer(highlightLayer);
+  try {
+    const feat = await apiFetch(`/api/protected-areas/${id}`);
+    highlightLayer = L.geoJSON(feat, { style: () => style.selected }).addTo(map);
+    if (highlightLayer.getBounds().isValid()) {
+      map.fitBounds(highlightLayer.getBounds(), { maxZoom: 12, padding: [40, 40] });
+    }
+    const p = feat.properties;
+    const areaTxt =
+      p.area_km2 != null && Number.isFinite(parseFloat(p.area_km2))
+        ? `${parseFloat(p.area_km2).toFixed(1)} km²`
+        : '—';
+    L.popup()
+      .setLatLng(highlightLayer.getBounds().getCenter())
+      .setContent(`
+        <strong>${esc(p.name)}</strong>
+        ${p.area_type ? `<br><span class="meta">${esc(p.area_type)}</span>` : ''}
+        <div class="meta">
+          Codice: <code>${esc(p.external_code || '—')}</code><br>
+          Superficie: ${areaTxt}
+          ${p.source_name ? `<br>Sorgente: ${esc(p.source_name)}` : ''}
+        </div>
+      `)
+      .openOn(map);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function onProtectedAreaMapClick(props) {
+  if (props && props.id != null) {
+    void selectProtectedArea(props.id);
+  }
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -199,8 +457,17 @@ async function init() {
   regionsGeoCache = await apiFetch('/api/regions/geojson');
   renderRegionsLayer();
 
-  const total = await apiFetch('/api/municipalities?limit=1&offset=0');
-  statsEl.textContent = `${total.total.toLocaleString('it-IT')} comuni totali`;
+  const [total, paHead] = await Promise.all([
+    apiFetch('/api/municipalities?limit=1&offset=0'),
+    apiFetch('/api/protected-areas?limit=1&offset=0').catch(() => null),
+  ]);
+  const comuniTxt = `${total.total.toLocaleString('it-IT')} comuni totali`;
+  if (paHead && typeof paHead.total === 'number') {
+    statsEl.textContent =
+      `${comuniTxt} · ${paHead.total.toLocaleString('it-IT')} parchi e aree protette`;
+  } else {
+    statsEl.textContent = comuniTxt;
+  }
 
   try {
     await loadGroupKinds();
@@ -213,7 +480,10 @@ async function init() {
   }
 
   hideLoading();
-  await loadMunicipalities();
+  applySearchModeChrome();
+  if (btnSearchComuni) btnSearchComuni.addEventListener('click', () => void setSearchMode('comuni'));
+  if (btnSearchParchi) btnSearchParchi.addEventListener('click', () => void setSearchMode('parchi'));
+  await loadMainList();
   updateSelectedUI();
 }
 
@@ -252,16 +522,21 @@ function resetGroupDetailEmpty() {
 }
 
 async function applySelectedGroup() {
+  if (state.searchMode !== 'comuni') {
+    return;
+  }
   groupingLayer = clearLayer(groupingLayer);
   municipalsLayer = clearLayer(municipalsLayer);
   highlightLayer = clearLayer(highlightLayer);
+  protectedAreasLayer = clearLayer(protectedAreasLayer);
   const gid = selGroup.value;
   if (!gid) {
     state.group = null;
     resetGroupDetailEmpty();
     state.page = 0;
     clearSelection();
-    await loadMunicipalities();
+    await refreshAdministrativeAreas();
+    await loadMainList();
     return;
   }
   try {
@@ -307,7 +582,7 @@ async function applySelectedGroup() {
       groupDetail.innerHTML +=
         '<br><em>Geometria non disponibile (nessun comune associato).</em>';
     }
-    await loadMunicipalities();
+    await loadMainList();
   } catch (e) {
     console.error(e);
     groupDetail.classList.remove('empty');
@@ -343,6 +618,7 @@ selReg.addEventListener('change', async () => {
   state.group = null;
   state.page = 0;
   state.selectedProCom = null;
+  state.selectedProtectedId = null;
   clearSelection();
 
   selProv.innerHTML = '<option value="">— Tutte le Province —</option>';
@@ -350,6 +626,7 @@ selReg.addEventListener('change', async () => {
 
   provincesLayer  = clearLayer(provincesLayer);
   municipalsLayer = clearLayer(municipalsLayer);
+  protectedAreasLayer = clearLayer(protectedAreasLayer);
   highlightLayer  = clearLayer(highlightLayer);
   provincesGeoCache = null;
 
@@ -373,46 +650,36 @@ selReg.addEventListener('change', async () => {
     map.setView([42.5, 12.5], 6);
   }
 
-  await loadMunicipalities();
+  await refreshAdministrativeAreas();
+  await loadMainList();
 });
 
 selProv.addEventListener('change', async () => {
+  if (state.searchMode === 'parchi') return;
   state.prov = selProv.value ? parseInt(selProv.value) : null;
   state.group = null;
   state.page = 0;
   state.selectedProCom = null;
+  state.selectedProtectedId = null;
   clearSelection();
 
-  municipalsLayer = clearLayer(municipalsLayer);
-  highlightLayer  = clearLayer(highlightLayer);
-
   renderProvincesLayer();
-
-  if (state.prov) {
-    const geoM = await apiFetch(`/api/municipalities/geojson?prov=${state.prov}`);
-    municipalsLayer = makeGeoLayer(geoM, style.municipality, onMunicipalityMapClick).addTo(map);
-    if (provincesLayer && provincesLayer.getBounds().isValid()) {
-      map.fitBounds(provincesLayer.getBounds(), { padding: [28, 28] });
-    }
-  } else if (state.reg && provincesLayer && provincesLayer.getBounds().isValid()) {
-    map.fitBounds(provincesLayer.getBounds(), { padding: [30, 30] });
-  }
-
-  await loadMunicipalities();
+  await refreshAdministrativeAreas();
+  await loadMainList();
 });
 
 let searchTimer = null;
 if (chkMontanoL131) {
   chkMontanoL131.addEventListener('change', async () => {
     state.page = 0;
-    await loadMunicipalities();
+    await loadMainList();
   });
 }
 
 if (chkHasContacts) {
   chkHasContacts.addEventListener('change', async () => {
     state.page = 0;
-    await loadMunicipalities();
+    await loadMainList();
   });
 }
 
@@ -421,7 +688,7 @@ searchInput.addEventListener('input', () => {
   searchTimer = setTimeout(async () => {
     state.q    = searchInput.value.trim();
     state.page = 0;
-    await loadMunicipalities();
+    await loadMainList();
   }, 300);
 });
 
@@ -456,11 +723,13 @@ btnReset.addEventListener('click', async () => {
   state.q    = '';
   state.page = 0;
   state.selectedProCom = null;
+  state.selectedProtectedId = null;
   clearSelection();
 
   groupingLayer   = clearLayer(groupingLayer);
   provincesLayer  = clearLayer(provincesLayer);
   municipalsLayer = clearLayer(municipalsLayer);
+  protectedAreasLayer = clearLayer(protectedAreasLayer);
   highlightLayer  = clearLayer(highlightLayer);
   provincesGeoCache = null;
 
@@ -472,7 +741,7 @@ btnReset.addEventListener('click', async () => {
 
   renderRegionsLayer();
   map.setView([42.5, 12.5], 6);
-  loadMunicipalities();
+  loadMainList();
 });
 
 // ── Map click handlers ───────────────────────────────────────────────────────
@@ -569,8 +838,11 @@ function renderTable(items) {
   const pageIds = items.map((m) => m.pro_com);
   const allChecked = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
   const someChecked = pageIds.some((id) => selected.has(id));
-  chkAll.indeterminate = !allChecked && someChecked;
-  chkAll.checked = allChecked;
+  const ca = chkAllEl();
+  if (ca) {
+    ca.indeterminate = !allChecked && someChecked;
+    ca.checked = allChecked;
+  }
 }
 
 function esc(s) {
@@ -617,8 +889,11 @@ function toggleSelected(procom, checked) {
 function clearSelection() {
   selected.clear();
   updateSelectedUI();
-  chkAll.indeterminate = false;
-  chkAll.checked = false;
+  const ca = chkAllEl();
+  if (ca) {
+    ca.indeterminate = false;
+    ca.checked = false;
+  }
 }
 
 // ── Pagination ───────────────────────────────────────────────────────────────
@@ -627,11 +902,11 @@ function renderPagination() {
   paginationEl.innerHTML = '';
   if (total <= 1) return;
 
-  const prev = btn('‹', state.page > 0, () => { state.page--; loadMunicipalities(); });
+  const prev = btn('‹', state.page > 0, () => { state.page--; loadMainList(); });
   const info = document.createElement('span');
   info.id = 'page-info';
   info.textContent = `${state.page + 1} / ${total}`;
-  const next = btn('›', state.page < total - 1, () => { state.page++; loadMunicipalities(); });
+  const next = btn('›', state.page < total - 1, () => { state.page++; loadMainList(); });
 
   paginationEl.append(prev, info, next);
 }
@@ -645,18 +920,23 @@ function btn(label, enabled, onClick) {
   return b;
 }
 
-chkAll.addEventListener('change', () => {
+document.getElementById('table-area').addEventListener('change', (e) => {
+  const t = e.target;
+  if (!t || t.id !== 'chk-all') return;
+  const ca = chkAllEl();
+  if (!ca) return;
   const checks = tbody.querySelectorAll('input[type="checkbox"][data-procom]');
   checks.forEach((c) => {
     const procom = parseInt(c.getAttribute('data-procom'), 10);
-    c.checked = chkAll.checked;
-    toggleSelected(procom, chkAll.checked);
+    c.checked = ca.checked;
+    toggleSelected(procom, ca.checked);
   });
 });
 
 // ── Select/highlight municipality ────────────────────────────────────────────
 async function selectMunicipality(procom) {
   state.selectedProCom = procom;
+  state.selectedProtectedId = null;
 
   // Update table highlight
   document.querySelectorAll('#tbody tr').forEach(tr => tr.classList.remove('selected'));
@@ -895,7 +1175,7 @@ btnExportPng.addEventListener('click', async () => {
   try {
     await renderCardAndCapture('png');
     clearSelection();
-    await loadMunicipalities();
+    await loadMainList();
   } catch (e) {
     console.error(e);
   }
@@ -904,7 +1184,7 @@ btnExportPdf.addEventListener('click', async () => {
   try {
     await renderCardAndCapture('pdf');
     clearSelection();
-    await loadMunicipalities();
+    await loadMainList();
   } catch (e) {
     console.error(e);
   }

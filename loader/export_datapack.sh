@@ -29,17 +29,24 @@ fi
 
 echo "=== Export datapack (${YEAR}) → ${OUT} (${COUNT} comuni) ==="
 
-echo "[1/4] regions.geojson ..."
+HAS_PA="$(PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PGUSER}" -d "${PGDATABASE}" -tAc \
+  "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='protected_areas')")"
+PA_COUNT=0
+if [[ "${HAS_PA}" == "t" ]]; then
+  PA_COUNT="$(PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PGUSER}" -d "${PGDATABASE}" -tAc "SELECT count(*)::bigint FROM protected_areas")"
+fi
+
+echo "[1/5] regions.geojson ..."
 ogr2ogr -f GeoJSON "${OUT}/regions.geojson" "${PG_CONN}" \
   -sql 'SELECT cod_reg, den_reg, geom FROM regions ORDER BY cod_reg' \
   -t_srs EPSG:4326 -lco RFC7946=YES
 
-echo "[2/4] provinces.geojson ..."
+echo "[2/5] provinces.geojson ..."
 ogr2ogr -f GeoJSON "${OUT}/provinces.geojson" "${PG_CONN}" \
   -sql 'SELECT cod_prov, cod_reg, den_prov, sigla, tipo_uts, geom FROM provinces ORDER BY cod_prov' \
   -t_srs EPSG:4326 -lco RFC7946=YES
 
-echo "[3/4] municipalities.geojson (può richiedere diversi minuti) ..."
+echo "[3/5] municipalities.geojson (può richiedere diversi minuti) ..."
 ogr2ogr -f GeoJSON "${OUT}/municipalities.geojson" "${PG_CONN}" \
   -sql "SELECT
           pro_com,
@@ -68,7 +75,16 @@ ogr2ogr -f GeoJSON "${OUT}/municipalities.geojson" "${PG_CONN}" \
         ORDER BY pro_com" \
   -t_srs EPSG:4326 -lco RFC7946=YES
 
-echo "[4/4] territorial_groups.json ..."
+if [[ "${HAS_PA}" == "t" ]]; then
+  echo "[4/5] protected_areas.geojson (${PA_COUNT} poligoni) ..."
+  ogr2ogr -f GeoJSON "${OUT}/protected_areas.geojson" "${PG_CONN}" \
+    -sql 'SELECT id, external_code, name, area_type, source_name, geom FROM protected_areas ORDER BY id' \
+    -t_srs EPSG:4326 -lco RFC7946=YES
+else
+  echo "[4/5] protected_areas.geojson — tabella assente, skip."
+fi
+
+echo "[5/5] territorial_groups.json ..."
 PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PGUSER}" -d "${PGDATABASE}" -t -A -q \
   -c "SELECT json_build_object(
         'groups',
@@ -109,6 +125,13 @@ echo "=== manifest.json ==="
   HASH_PROV=$(sha256sum provinces.geojson | awk '{print $1}')
   HASH_COM=$(sha256sum municipalities.geojson | awk '{print $1}')
   HASH_TG=$(sha256sum territorial_groups.json | awk '{print $1}')
+  if [[ "${HAS_PA}" == "t" ]] && [[ -f protected_areas.geojson ]]; then
+    HASH_PA=$(sha256sum protected_areas.geojson | awk '{print $1}')
+  else
+    HASH_PA=""
+  fi
+
+  if [[ "${HAS_PA}" == "t" ]]; then JSON_HAS_PA=true; else JSON_HAS_PA=false; fi
 
   jq -n \
     --arg schema "comuni-datapack-v1" \
@@ -124,6 +147,9 @@ echo "=== manifest.json ==="
     --arg hash_provinces "${HASH_PROV}" \
     --arg hash_municipalities "${HASH_COM}" \
     --arg hash_territorial_groups "${HASH_TG}" \
+    --argjson has_pa "${JSON_HAS_PA}" \
+    --arg hash_protected_areas "${HASH_PA}" \
+    --argjson protected_areas_count "${PA_COUNT:-0}" \
     '{
       schema: $schema,
       version: $version,
@@ -136,12 +162,13 @@ echo "=== manifest.json ==="
         members_count: $tg_members,
         build_id: $build_id
       } + (if ($ref_max | length) == 0 then {} else {"reference_year_max": ($ref_max | tonumber)} end)),
-      files: {
+      protected_areas_meta: (if $has_pa then { schema_version: 1, areas_count: $protected_areas_count, build_id: $build_id } else null end),
+      files: ({
         regions: { path: "regions.geojson", sha256: $hash_regions },
         provinces: { path: "provinces.geojson", sha256: $hash_provinces },
         municipalities: { path: "municipalities.geojson", sha256: $hash_municipalities },
         territorial_groups: { path: "territorial_groups.json", sha256: $hash_territorial_groups }
-      }
+      } + (if $has_pa and ($hash_protected_areas | length) > 0 then { protected_areas: { path: "protected_areas.geojson", sha256: $hash_protected_areas } } else {} end))
     }' > manifest.json
 )
 
@@ -153,7 +180,8 @@ if [[ "${CREATE_ZIP:-0}" == "1" ]]; then
   (
     cd "${OUT}"
     rm -f "${ZIP_NAME}"
-    zip -rq "${ZIP_NAME}" \
-      manifest.json regions.geojson provinces.geojson municipalities.geojson territorial_groups.json
+    ZIPFILES=(manifest.json regions.geojson provinces.geojson municipalities.geojson territorial_groups.json)
+    if [[ -f protected_areas.geojson ]]; then ZIPFILES+=(protected_areas.geojson); fi
+    zip -rq "${ZIP_NAME}" "${ZIPFILES[@]}"
   )
 fi

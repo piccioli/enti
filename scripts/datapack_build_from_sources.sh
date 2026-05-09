@@ -61,6 +61,38 @@ docker compose run --rm \
   -v "${TMP_DATA}:/data:ro" \
   api node scripts/import_italy_unioni_anci_2023.js --format columns --file /data/anci-unioni-2023.txt
 
+echo "=== Migrazione DB aree protette (013) ==="
+docker compose exec -T db psql -U postgres -d comuni -v ON_ERROR_STOP=1 < "${ROOT_DIR}/db/migrations/013_protected_areas.sql"
+
+echo "=== Import aree protette (EUAP ISPRA / GeoJSON custom) ==="
+if [[ "${SKIP_PROTECTED_AREAS:-0}" == "1" ]]; then
+  echo "SKIP_PROTECTED_AREAS=1: import aree protette saltato."
+else
+  # Predefinito: EUAP da ISPRA SINA Cloud (FeatureServer). Override: PROTECTED_AREAS_URL o file già in /data.
+  if [[ -n "${PROTECTED_AREAS_URL:-}" ]]; then
+    echo "Download GeoJSON custom: ${PROTECTED_AREAS_URL}"
+    curl -fsSL "${PROTECTED_AREAS_URL}" -o "${TMP_DATA}/protected_areas.geojson"
+  elif [[ ! -f "${TMP_DATA}/protected_areas.geojson" ]]; then
+    echo "Download EUAP (ISPRA SINA Cloud, FeatureServer euap_mattm) → protected_areas.geojson"
+    docker compose run --rm \
+      -v "${TMP_DATA}:/data" \
+      -e EUAP_ARCGIS_LAYER_URL="${EUAP_ARCGIS_LAYER_URL:-}" \
+      -e EUAP_PAGE_SIZE="${EUAP_PAGE_SIZE:-}" \
+      loader bash /loader/download_euap_geojson.sh /data/protected_areas.geojson
+  else
+    echo "Uso protected_areas.geojson già presente in workspace build."
+  fi
+  docker compose run --rm \
+    -v "${TMP_DATA}:/data" \
+    -e SKIP_PROTECTED_AREAS="${SKIP_PROTECTED_AREAS:-0}" \
+    -e PROTECTED_AREAS_PATH="${PROTECTED_AREAS_PATH:-/data/protected_areas.geojson}" \
+    -e PA_SOURCE_NAME="${PA_SOURCE_NAME:-ISPRA_SINA_EUAP}" \
+    -e PA_NAME_KEYS="${PA_NAME_KEYS:-nome_gazze,name,NOME,DENOMINAZIONE}" \
+    -e PA_CODE_KEYS="${PA_CODE_KEYS:-codice_are,code,CODICE,id,ID}" \
+    -e PA_TYPE_KEYS="${PA_TYPE_KEYS:-tipo,type,TIPO,TIPOLOGIA}" \
+    api node scripts/import_protected_areas.js
+fi
+
 docker compose run --rm \
   -e DATAPACK_DIR=/datapack \
   -e ISTAT_YEAR="${ISTAT_YEAR:-}" \

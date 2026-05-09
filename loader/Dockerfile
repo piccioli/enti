@@ -15,8 +15,8 @@ WORKDIR /loader
 COPY load.sh load_popolazione.sh load_altimetria.sh load_comuni_montani_l131.sh load_contatti_comuni.sh \
     build_contatti_comuni_from_ipa.sh build_contatti_comuni_from_ipa.py \
     parse_altimetria_xlsx.py parse_comuni_montani_pdf_xml.py post_load.sql \
-    export_datapack.sh import_datapack.sh ./
+    export_datapack.sh import_datapack.sh download_euap_geojson.sh ./
 RUN chmod +x load.sh load_popolazione.sh load_altimetria.sh load_comuni_montani_l131.sh load_contatti_comuni.sh build_contatti_comuni_from_ipa.sh \
-    export_datapack.sh import_datapack.sh
+    export_datapack.sh import_datapack.sh download_euap_geojson.sh
 
 CMD ["bash", "load.sh"]

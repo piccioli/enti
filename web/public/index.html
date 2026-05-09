@@ -32,13 +32,21 @@
 <main>
   <aside id="sidebar">
     <div id="filters">
-      <div class="filter-row">
-        <select id="sel-reg">
+      <div class="filter-row filter-row-region">
+        <select id="sel-reg" aria-label="Regione">
           <option value="">— Tutte le Regioni —</option>
         </select>
-        <select id="sel-prov" disabled>
+      </div>
+      <div class="filter-row filter-row-prov" id="filter-row-prov">
+        <select id="sel-prov" aria-label="Provincia" disabled>
           <option value="">— Tutte le Province —</option>
         </select>
+      </div>
+      <div class="filter-row filter-row-search-mode">
+        <div class="search-mode-wrap" role="group" aria-label="Ambito ricerca mappa">
+          <button type="button" class="segment-btn segment-active" id="btn-search-comuni" aria-pressed="true">Comuni</button>
+          <button type="button" class="segment-btn" id="btn-search-parchi" aria-pressed="false">Parchi</button>
+        </div>
       </div>
       <div class="filter-row">
         <input id="search-input" type="text" placeholder="Cerca comune..." autocomplete="off" />
@@ -80,7 +88,7 @@
 
     <div id="table-area">
       <table>
-        <thead>
+        <thead id="thead-main">
           <tr>
             <th class="col-check"><input id="chk-all" type="checkbox" aria-label="Seleziona tutti" /></th>
             <th>Comune</th>
