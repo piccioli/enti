@@ -615,6 +615,20 @@ tbody td.comune {
   text-overflow: ellipsis;
 }
 
+/* Denominazione raggruppamento: sempre completamente visibile, va a capo */
+tbody td.aggr-name {
+  font-weight: 500;
+  width: 18rem;
+  min-width: 14rem;
+  max-width: 22rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
+  overflow: visible;
+  text-overflow: clip;
+}
+
 tbody td.code {
   font-family: monospace;
   color: var(--text-muted);
@@ -951,6 +965,97 @@ thead th[data-sort].is-sorted-desc:hover::after {
 }
 
 .modal-error.hidden { display: none; }
+
+/* Modal grande (es. elenco comuni di un raggruppamento) */
+.modal-dialog-lg {
+  width: min(900px, calc(100vw - 32px));
+  max-height: calc(100vh - 96px);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-dialog-lg .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-loading {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 12px 4px;
+}
+
+.modal-members-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.modal-members-tablewrap {
+  flex: 1 1 auto;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.modal-members-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.modal-members-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  padding: 9px 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--text-muted);
+  z-index: 1;
+}
+
+.modal-members-table tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(51, 65, 85, .5);
+  color: var(--text);
+}
+
+.modal-members-table tbody tr:hover { background: var(--surface2); }
+
+.modal-members-table td.code {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Pulsante numerico cliccabile in tabella (numero comuni → apre lista) */
+.btn-link-num {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(59, 130, 246, .35);
+  text-underline-offset: 2px;
+}
+
+.btn-link-num:hover { text-decoration-color: var(--accent); }
+.btn-link-num:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-light);
+  border-radius: 3px;
+}
 
 @media (max-width: 640px) {
   .modal-dialog { margin: 56px auto; }

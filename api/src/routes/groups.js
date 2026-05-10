@@ -124,7 +124,28 @@ router.get('/', async (req, res, next) => {
         g.id, g.slug, g.label, g.group_kind, g.notes,
         g.valid_from, g.valid_to,
         g.source_name, g.source_url, g.reference_year, g.external_id, g.is_demo,
-        (SELECT count(*)::int FROM territorial_group_members m2 WHERE m2.group_id = g.id) AS member_count`;
+        (SELECT count(*)::int FROM territorial_group_members m2 WHERE m2.group_id = g.id) AS member_count,
+        (SELECT string_agg(DISTINCT r.den_reg, ', ' ORDER BY r.den_reg)
+           FROM territorial_group_members tgm
+           JOIN municipalities mm ON mm.pro_com = tgm.pro_com
+           JOIN regions r ON r.cod_reg = mm.cod_reg
+           WHERE tgm.group_id = g.id) AS regions_touched,
+        (SELECT string_agg(DISTINCT pr.sigla, ', ' ORDER BY pr.sigla)
+           FROM territorial_group_members tgm
+           JOIN municipalities mm ON mm.pro_com = tgm.pro_com
+           JOIN provinces pr ON pr.cod_prov = mm.cod_prov
+           WHERE tgm.group_id = g.id) AS provinces_touched,
+        (SELECT COALESCE(SUM(mm.popolazione_residente), 0)::bigint
+           FROM territorial_group_members tgm
+           JOIN municipalities mm ON mm.pro_com = tgm.pro_com
+           WHERE tgm.group_id = g.id) AS population_total,
+        (SELECT COALESCE(SUM(ST_Area(mm.geom::geography)) / 1e6, 0)::double precision
+           FROM territorial_group_members tgm
+           JOIN municipalities mm ON mm.pro_com = tgm.pro_com
+           WHERE tgm.group_id = g.id) AS area_km2_total,
+        (SELECT COALESCE(SUM(s.km_inside), 0)::double precision
+           FROM territorial_group_rei_stats s
+           WHERE s.group_id = g.id) AS km_sentieri_total`;
 
     if (geoWhere.length > 0) {
       params.push(limit, offset);

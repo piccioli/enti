@@ -381,7 +381,12 @@ const THEAD_AGGREGAZIONI_ROW = `
   <tr>
     <th data-sort="kind_label">Tipo</th>
     <th data-sort="label">Denominazione</th>
-    <th class="num" data-sort="member_count">Comuni</th>
+    <th class="num" data-sort="member_count" title="Clicca il numero per vedere l'elenco dei comuni">Comuni</th>
+    <th data-sort="regions_touched">Regioni</th>
+    <th data-sort="provinces_touched">Province</th>
+    <th class="num" data-sort="population_total" title="Somma abitanti dei comuni membri (ISTAT)">Popolazione</th>
+    <th class="num" data-sort="area_km2_total" title="Somma superficie (km²) dei comuni membri">Superficie km²</th>
+    <th class="num" data-sort="km_sentieri_total" title="Km totali sentieri CAI (SDA 3+4) dentro l'area del raggruppamento">Sentieri (km)</th>
     <th data-sort="reference_year">Anno rif.</th>
     <th data-sort="source_name">Fonte</th>
   </tr>`;
@@ -805,14 +810,39 @@ function renderTableGroups(items) {
           ? `<a href="${esc(normalizeUrl(g.source_url))}" target="_blank" rel="noopener" onclick="event.stopPropagation();">${esc(g.source_name)}</a>`
           : esc(g.source_name))
       : '—';
+    const memberCount = Number.isFinite(Number(g.member_count)) ? Number(g.member_count) : 0;
+    const memberCountTxt = memberCount > 0
+      ? `<button type="button" class="btn-link-num" data-group-members="${esc(String(g.id))}" data-group-label="${esc(g.label || '')}" title="Mostra elenco comuni">${memberCount.toLocaleString('it-IT')}</button>`
+      : '—';
+    const popTotal = Number.isFinite(parseFloat(g.population_total))
+      ? parseInt(String(g.population_total), 10).toLocaleString('it-IT')
+      : '—';
+    const areaTotal = Number.isFinite(parseFloat(g.area_km2_total))
+      ? parseFloat(g.area_km2_total).toLocaleString('it-IT', { maximumFractionDigits: 1 })
+      : '—';
+    const kmSentieri = parseFloat(g.km_sentieri_total);
+    const kmSentieriTxt = Number.isFinite(kmSentieri) && kmSentieri > 0
+      ? kmSentieri.toLocaleString('it-IT', { maximumFractionDigits: 1 })
+      : '—';
+    const regionsTxt = g.regions_touched ? esc(g.regions_touched) : '—';
+    const provincesTxt = g.provinces_touched ? esc(g.provinces_touched) : '—';
     tr.innerHTML = `
       <td>${esc(g.kind_label || g.group_kind || '—')}</td>
-      <td class="comune" title="${esc(g.label || '')}">${esc(g.label || '—')}</td>
-      <td class="num">${Number.isFinite(Number(g.member_count)) ? Number(g.member_count).toLocaleString('it-IT') : '—'}</td>
+      <td class="aggr-name">${esc(g.label || '—')}</td>
+      <td class="num">${memberCountTxt}</td>
+      <td title="${regionsTxt}">${regionsTxt}</td>
+      <td title="${provincesTxt}">${provincesTxt}</td>
+      <td class="num">${popTotal}</td>
+      <td class="num">${areaTotal}</td>
+      <td class="num">${kmSentieriTxt}</td>
       <td>${refY}</td>
       <td>${fonte}</td>
     `;
-    tr.addEventListener('click', () => {
+    tr.addEventListener('click', (e) => {
+      // Bottone elenco comuni: non triggerare la selezione di gruppo.
+      const t = e.target;
+      if (t && t.closest && t.closest('button.btn-link-num')) return;
+      if (t && t.tagName === 'A') return;
       // Sincronizza la tendina (utile quando si torna sulla mappa).
       if (selGroup) {
         const opt = [...selGroup.options].find((o) => o.value === String(g.id));
@@ -824,6 +854,65 @@ function renderTableGroups(items) {
     });
     tbody.appendChild(tr);
   });
+}
+
+// ── Modal: lista comuni di un raggruppamento ─────────────────────────────────
+async function openGroupMembersModal(groupId, groupLabel) {
+  const modal = document.getElementById('group-members-modal');
+  const titleEl = document.getElementById('group-members-title');
+  const bodyEl = document.getElementById('group-members-body');
+  if (!modal || !bodyEl) return;
+  if (titleEl) titleEl.textContent = groupLabel ? `Comuni · ${groupLabel}` : 'Comuni del raggruppamento';
+  bodyEl.innerHTML = '<p class="modal-loading">Caricamento elenco comuni…</p>';
+  modal.classList.remove('hidden');
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+
+  try {
+    const data = await apiFetch(`/api/groups/${encodeURIComponent(groupId)}`);
+    const members = Array.isArray(data && data.members) ? data.members : [];
+    if (!members.length) {
+      bodyEl.innerHTML = '<p class="modal-loading">Nessun comune associato a questo raggruppamento.</p>';
+      return;
+    }
+    const rows = members.map((m) => `
+      <tr>
+        <td>${esc(m.comune || '—')}</td>
+        <td>${esc(m.sigla || '—')}</td>
+        <td>${esc(m.den_prov || '—')}</td>
+        <td>${esc(m.den_reg || '—')}</td>
+        <td class="code">${esc(m.pro_com_t || String(m.pro_com || ''))}</td>
+      </tr>
+    `).join('');
+    bodyEl.innerHTML = `
+      <div class="modal-members-summary">${members.length.toLocaleString('it-IT')} comuni</div>
+      <div class="modal-members-tablewrap">
+        <table class="modal-members-table">
+          <thead>
+            <tr>
+              <th>Comune</th>
+              <th>Prov</th>
+              <th>Provincia</th>
+              <th>Regione</th>
+              <th>Cod. ISTAT</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    console.warn('openGroupMembersModal:', e);
+    bodyEl.innerHTML = '<p class="modal-loading modal-error">Errore caricamento elenco comuni.</p>';
+  }
+}
+
+function closeGroupMembersModal() {
+  const modal = document.getElementById('group-members-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  modal.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
 }
 
 // ── Ordinamento colonne (client-side, pagina corrente) ───────────────────────
@@ -885,8 +974,9 @@ function readSortValue(item, key) {
   if (key === 'pec') return item.pec ? 1 : 0;
   if (key === 'comune_montano_l131') return item.comune_montano_l131 ? 1 : 0;
   // Numeri arrivati come stringhe da Postgres (es. km_sentieri_total, area_km2)
-  if (key === 'km_sentieri_total' || key === 'area_km2'
+  if (key === 'km_sentieri_total' || key === 'area_km2' || key === 'area_km2_total'
       || key === 'popolazione_residente' || key === 'altitudine_media_sl_m'
+      || key === 'population_total'
       || key === 'member_count' || key === 'reference_year' || key === 'pro_com'
       || key === 'id') {
     const v = item[key];
@@ -1615,6 +1705,34 @@ if (tableAreaEl) {
 if (theadMain) {
   theadMain.addEventListener('click', onTheadSortClick);
 }
+
+if (tbody) {
+  tbody.addEventListener('click', (e) => {
+    const btn = e.target && e.target.closest && e.target.closest('button.btn-link-num[data-group-members]');
+    if (!btn) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const gid = btn.getAttribute('data-group-members');
+    const lbl = btn.getAttribute('data-group-label') || '';
+    if (gid) void openGroupMembersModal(gid, lbl);
+  });
+}
+
+// Modal lista comuni di un raggruppamento: chiusura
+(() => {
+  const modal = document.getElementById('group-members-modal');
+  if (!modal) return;
+  modal.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t && t.getAttribute && t.getAttribute('data-close-modal') === '1') {
+      closeGroupMembersModal();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!modal.classList.contains('hidden')) closeGroupMembersModal();
+  });
+})();
 
 // ── Select/highlight municipality ────────────────────────────────────────────
 async function selectMunicipality(procom) {
