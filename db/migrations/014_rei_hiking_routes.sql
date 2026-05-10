@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS rei_hiking_routes (
 CREATE INDEX IF NOT EXISTS rei_hr_geom_gix ON rei_hiking_routes USING GIST (geom);
 CREATE INDEX IF NOT EXISTS rei_hr_sda_idx ON rei_hiking_routes (sda);
 
-COMMENT ON TABLE rei_hiking_routes IS 'Sentieri Catasto REI (CAI) SDA 3–4 importati in build da OSM2CAI v2';
+COMMENT ON TABLE rei_hiking_routes IS 'Sentieri Catasto REI (CAI) SDA 3–4 importati in build da GeoJSON in datapack-dist/sentier';
 COMMENT ON COLUMN rei_hiking_routes.id IS 'ID numerico OSM2CAI (stabile, usato come PK)';
 COMMENT ON COLUMN rei_hiking_routes.sda IS 'Stato di accatastamento: 3=ready, 4=validated';
 

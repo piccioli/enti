@@ -2,6 +2,9 @@
 'use strict';
 
 /**
+ * (Opzionale) Scarica i sentieri REI da OSM2CAI v2 — la build datapack usa invece file locali
+ * (`import_rei_sentier.js` + cartella datapack-dist/sentier).
+ *
  * Scarica i sentieri del Catasto REI (SDA 3 e 4) da OSM2CAI v2 e li upserta in PostGIS.
  * Dopo l'upsert calcola metriche spaziali pre-calcolate (km dentro comuni, parchi, gruppi).
  *
@@ -21,6 +24,7 @@ const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const db = require('../src/db');
+const { computeMetrics } = require('./rei_compute_metrics');
 
 // ── Costanti ──────────────────────────────────────────────────────────────────
 
@@ -28,30 +32,29 @@ const OSM2CAI_BASE = 'https://osm2cai.cai.it';
 const RATE_DELAY_MS = parseInt(process.env.REI_RATE_DELAY_MS || '150', 10);
 const PROGRESS_FILE = process.env.REI_PROGRESS_FILE || '/tmp/rei_progress.json';
 
-// Codici regione CAI → cod_reg ISTAT + label per display.
-// Se un codice restituisce 404, viene saltato con warning.
-// Verificare all'occorrenza su https://osm2cai.cai.it/docs?api-docs.json
+// Codici regione CAI (lettera ufficiale CAI) → cod_reg ISTAT + label.
+// Riferimento: tabella codici sezione CAI / OSM2CAI. Se un codice restituisce 404, skip con warning.
 const CAI_REGIONS = [
-  { cai: 'A',   istat: '13', label: 'Abruzzo' },
-  { cai: 'B',   istat: '17', label: 'Basilicata' },
-  { cai: 'CAL', istat: '18', label: 'Calabria' },
-  { cai: 'C',   istat: '15', label: 'Campania' },
-  { cai: 'ER',  istat: '08', label: 'Emilia-Romagna' },
-  { cai: 'FVG', istat: '06', label: 'Friuli Venezia Giulia' },
-  { cai: 'L',   istat: '12', label: 'Lazio' },
-  { cai: 'LS',  istat: '07', label: 'Liguria' },
-  { cai: 'LO',  istat: '03', label: 'Lombardia' },
-  { cai: 'MA',  istat: '11', label: 'Marche' },
-  { cai: 'MOL', istat: '14', label: 'Molise' },
-  { cai: 'P',   istat: '01', label: 'Piemonte' },
-  { cai: 'PUG', istat: '16', label: 'Puglia' },
-  { cai: 'SAR', istat: '20', label: 'Sardegna' },
-  { cai: 'SI',  istat: '19', label: 'Sicilia' },
-  { cai: 'T',   istat: '09', label: 'Toscana' },
-  { cai: 'TN',  istat: '04', label: 'Trentino-Alto Adige (PAT)' },
-  { cai: 'U',   istat: '10', label: 'Umbria' },
-  { cai: 'VDA', istat: '02', label: 'Valle d\'Aosta' },
-  { cai: 'V',   istat: '05', label: 'Veneto' },
+  { cai: 'P', istat: '13', label: 'Abruzzo' },
+  { cai: 'T', istat: '17', label: 'Basilicata' },
+  { cai: 'U', istat: '18', label: 'Calabria' },
+  { cai: 'S', istat: '15', label: 'Campania' },
+  { cai: 'H', istat: '08', label: 'Emilia-Romagna' },
+  { cai: 'A', istat: '06', label: 'Friuli Venezia Giulia' },
+  { cai: 'O', istat: '12', label: 'Lazio' },
+  { cai: 'G', istat: '07', label: 'Liguria' },
+  { cai: 'D', istat: '03', label: 'Lombardia' },
+  { cai: 'M', istat: '11', label: 'Marche' },
+  { cai: 'Q', istat: '14', label: 'Molise' },
+  { cai: 'E', istat: '01', label: 'Piemonte' },
+  { cai: 'R', istat: '16', label: 'Puglia' },
+  { cai: 'Z', istat: '20', label: 'Sardegna' },
+  { cai: 'V', istat: '19', label: 'Sicilia' },
+  { cai: 'L', istat: '09', label: 'Toscana' },
+  { cai: 'C', istat: '04', label: 'Trentino-Alto Adige' },
+  { cai: 'N', istat: '10', label: 'Umbria' },
+  { cai: 'F', istat: '02', label: 'Valle d\'Aosta' },
+  { cai: 'B', istat: '05', label: 'Veneto' },
 ];
 
 // ── Argomenti CLI ─────────────────────────────────────────────────────────────
@@ -166,8 +169,29 @@ function toDateStr(v) {
   return s || null;
 }
 
-async function upsertRoute(client, feature, updatedAt) {
+/** La risposta può essere il Feature GeoJSON diretto o annidato in `{ data: Feature }`. */
+function unwrapFeature(body) {
+  if (body && body.type === 'Feature') return body;
+  if (body && body.data && body.data.type === 'Feature') return body.data;
+  return body;
+}
+
+function resolveRouteId(properties, indexId) {
+  const p = properties || {};
+  return (
+    toInt(p.id)
+    ?? toInt(p.osm2cai_id)
+    ?? toInt(p.ID)
+    ?? (Number.isFinite(indexId) ? Math.trunc(indexId) : null)
+  );
+}
+
+async function upsertRoute(client, feature, updatedAt, indexId) {
   const p = feature.properties || {};
+  const routeId = resolveRouteId(p, indexId);
+  if (routeId == null) {
+    throw new Error('id sentiero mancante (properties e indice)');
+  }
   const geomJson = JSON.stringify(feature.geometry);
 
   // Forza MultiLineString (API può restituire anche LineString singola)
@@ -238,7 +262,7 @@ async function upsertRoute(client, feature, updatedAt) {
       geom = EXCLUDED.geom`,
     [
       geomJson,
-      toInt(p.id),
+      routeId,
       toInt(p.relation_id),
       p.ref ?? null,
       p.ref_REI ?? null,
@@ -271,95 +295,9 @@ async function upsertRoute(client, feature, updatedAt) {
       toDateStr(p.validation_date),
       toDateStr(p.survey_date),
       p.osm2cai_status ?? null,
-      `${OSM2CAI_BASE}/api/v2/hiking-route-tdh/${toInt(p.id)}`,
+      `${OSM2CAI_BASE}/api/v2/hiking-route/${routeId}`,
       updatedAt,
     ]
-  );
-}
-
-// ── Calcolo metriche spaziali ─────────────────────────────────────────────────
-
-async function computeMetrics(client) {
-  console.log('\n=== Calcolo metriche spaziali (può richiedere alcuni minuti) ===');
-
-  console.log('  [1/3] Comuni → municipality_rei_hiking_routes ...');
-  await client.query('TRUNCATE municipality_rei_hiking_routes');
-  await client.query(`
-    INSERT INTO municipality_rei_hiking_routes (pro_com, osm2cai_id, sda, km_inside)
-    SELECT
-      m.pro_com,
-      hr.id,
-      hr.sda,
-      ST_Length(ST_Intersection(m.geom, hr.geom)::geography) / 1000.0 AS km_inside
-    FROM municipalities m
-    JOIN rei_hiking_routes hr ON ST_Intersects(m.geom, hr.geom)
-    WHERE ST_Length(ST_Intersection(m.geom, hr.geom)::geography) > 0
-  `);
-
-  console.log('  [2a/3] Comuni → municipality_rei_stats ...');
-  await client.query('TRUNCATE municipality_rei_stats');
-  await client.query(`
-    INSERT INTO municipality_rei_stats (pro_com, sda, km_inside)
-    SELECT pro_com, sda, SUM(km_inside)
-    FROM municipality_rei_hiking_routes
-    GROUP BY pro_com, sda
-  `);
-
-  // Parchi
-  const { rowCount: paCount } = await client.query(
-    "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='protected_areas' LIMIT 1"
-  );
-  if (paCount > 0) {
-    console.log('  [2/3] Parchi → protected_area_rei_hiking_routes ...');
-    await client.query('TRUNCATE protected_area_rei_hiking_routes');
-    await client.query(`
-      INSERT INTO protected_area_rei_hiking_routes (protected_area_id, osm2cai_id, sda, km_inside)
-      SELECT
-        pa.id,
-        hr.id,
-        hr.sda,
-        ST_Length(ST_Intersection(pa.geom, hr.geom)::geography) / 1000.0 AS km_inside
-      FROM protected_areas pa
-      JOIN rei_hiking_routes hr ON ST_Intersects(pa.geom, hr.geom)
-      WHERE ST_Length(ST_Intersection(pa.geom, hr.geom)::geography) > 0
-    `);
-
-    console.log('  [2b/3] Parchi → protected_area_rei_stats ...');
-    await client.query('TRUNCATE protected_area_rei_stats');
-    await client.query(`
-      INSERT INTO protected_area_rei_stats (protected_area_id, sda, km_inside)
-      SELECT protected_area_id, sda, SUM(km_inside)
-      FROM protected_area_rei_hiking_routes
-      GROUP BY protected_area_id, sda
-    `);
-  } else {
-    console.log('  [2/3] Parchi: tabella protected_areas assente, skip.');
-  }
-
-  // Gruppi territoriali
-  console.log('  [3/3] Gruppi territoriali → territorial_group_rei_stats ...');
-  await client.query('TRUNCATE territorial_group_rei_stats');
-  await client.query(`
-    INSERT INTO territorial_group_rei_stats (group_id, sda, km_inside)
-    SELECT g.id, hr.sda,
-           SUM(ST_Length(ST_Intersection(group_geom.geom, hr.geom)::geography) / 1000.0) AS km_inside
-    FROM territorial_groups g
-    JOIN LATERAL (
-      SELECT ST_UnaryUnion(ST_Collect(m.geom)) AS geom
-      FROM territorial_group_members tgm
-      JOIN municipalities m ON m.pro_com = tgm.pro_com
-      WHERE tgm.group_id = g.id
-    ) group_geom ON TRUE
-    JOIN rei_hiking_routes hr ON ST_Intersects(group_geom.geom, hr.geom)
-    WHERE ST_Length(ST_Intersection(group_geom.geom, hr.geom)::geography) > 0
-    GROUP BY g.id, hr.sda
-  `);
-
-  const { rows: mcStats } = await client.query('SELECT count(*)::int AS n FROM municipality_rei_stats');
-  const { rows: paStats } = await client.query('SELECT count(*)::int AS n FROM protected_area_rei_stats');
-  const { rows: tgStats } = await client.query('SELECT count(*)::int AS n FROM territorial_group_rei_stats');
-  console.log(
-    `OK metriche: comuni=${mcStats[0].n} righe stats, parchi=${paStats[0].n}, gruppi=${tgStats[0].n}`
   );
 }
 
@@ -443,15 +381,19 @@ async function main() {
       process.stdout.write(`  [${downloaded}/${total}] id=${id} ...`);
 
       try {
-        const feat = await fetchWithRetry(
-          `${OSM2CAI_BASE}/api/v2/hiking-route-tdh/${id}`
+        const raw = await fetchWithRetry(
+          `${OSM2CAI_BASE}/api/v2/hiking-route/${id}`
         );
+        const feat = unwrapFeature(raw);
+        if (!feat || feat.type !== 'Feature' || !feat.geometry) {
+          throw new Error('risposta API: GeoJSON Feature non valido');
+        }
 
         const p = feat.properties || {};
         const ref = p.ref || '';
         const refRei = p.ref_REI || '';
         const sda = p.sda ?? '?';
-        await upsertRoute(client, feat, updatedAt);
+        await upsertRoute(client, feat, updatedAt, id);
 
         progress.idsDone.push(id);
         if (downloaded % 50 === 0) saveProgress(progress);

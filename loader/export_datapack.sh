@@ -23,7 +23,10 @@ COUNT=$(PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" 
   -tAc "SELECT count(*) FROM municipalities")
 
 if [[ -z "${COUNT}" || "${COUNT}" == "0" ]]; then
-  echo "ERROR: nessun comune in municipalities. Esegui prima load.sh (--force) sul database." >&2
+  echo "ERROR: nessun comune in municipalities — nessun file GeoJSON viene scritto." >&2
+  echo "       Esegui il caricamento ISTAT nel DB (es. scripts/datapack_build_from_sources.sh fino a load.sh," >&2
+  echo "       oppure: docker compose run --rm loader bash load.sh --force)." >&2
+  echo "       DB atteso: host=${PGHOST:-db} name=${PGDATABASE:-comuni}" >&2
   exit 1
 fi
 

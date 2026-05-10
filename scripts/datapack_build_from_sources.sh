@@ -15,7 +15,8 @@ if [[ "${OUT}" != /* ]]; then
 fi
 mkdir -p "${OUT}"
 
-echo "=== Ricostruzione datapack dagli scrape ISTAT (load.sh --force in container) → ${OUT} ==="
+echo "=== Ricostruzione datapack dagli scrape ISTAT (load.sh --force in container) ==="
+echo "    Directory output (host): ${OUT}"
 
 # Workspace temporaneo per sorgenti/artefatti di build (evita dipendenza da ./data).
 TMP_DATA="$(mktemp -d "${TMPDIR:-/tmp}/wm-municipalities-data.XXXXXX")"
@@ -41,6 +42,16 @@ docker compose run --rm \
 docker compose run --rm \
   -v "${TMP_DATA}:/data" \
   loader bash load.sh --force
+
+echo "=== Verifica tabella municipalities (obbligatoria per export) ==="
+COMUNI_COUNT="$(docker compose exec -T db psql -U postgres -d comuni -tAc "SELECT count(*) FROM municipalities" | tr -d '[:space:]')"
+if [[ -z "${COMUNI_COUNT}" || "${COMUNI_COUNT}" == "0" ]]; then
+  echo "ERROR: dopo load.sh il database non contiene comuni (municipalities vuota)." >&2
+  echo "       L'export datapack non può proseguire. Controlla sopra gli errori del loader (rete, ISTAT, SSL)." >&2
+  echo "       Ripeti solo il caricamento: docker compose run --rm -v \"\$(mktemp -d):/data\" loader bash load.sh --force" >&2
+  exit 1
+fi
+echo "OK: ${COMUNI_COUNT} comuni importati nel DB."
 
 echo "=== Import raggruppamenti nazionali (città metropolitane) ==="
 docker compose exec -T api node scripts/import_italy_metropolitan_cities.js
@@ -96,11 +107,15 @@ fi
 echo "=== Migrazione DB sentieri REI (014) ==="
 docker compose exec -T db psql -U postgres -d comuni -v ON_ERROR_STOP=1 < "${ROOT_DIR}/db/migrations/014_rei_hiking_routes.sql"
 
-echo "=== Download + import sentieri Catasto REI (SDA 3 e 4, OSM2CAI v2) ==="
+echo "=== Import sentieri REI da ${OUT}/sentieri (o sentier): GeoJSON precaricati, nessun download ==="
 if [[ "${SKIP_REI:-0}" == "1" ]]; then
   echo "SKIP_REI=1: import sentieri REI saltato."
 else
-  docker compose exec -T api node scripts/import_rei_hiking_routes.js
+  mkdir -p "${OUT}/sentieri" "${OUT}/sentier"
+  docker compose run --rm \
+    -v "${OUT}:/datapack" \
+    -e DATAPACK_DIR=/datapack \
+    api node scripts/import_rei_sentier.js
 fi
 
 docker compose run --rm \
@@ -111,4 +126,6 @@ docker compose run --rm \
   -v "${OUT}:/datapack" \
   loader bash /loader/export_datapack.sh
 
-echo "OK."
+echo "OK. File datapack in:"
+ls -la "${OUT}"
+echo "(Percorso assoluto: ${OUT})"
