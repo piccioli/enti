@@ -1,5 +1,52 @@
 # TODO — idee e miglioramenti
 
+## 5. Viste tabellari — enti (comuni / aggregazioni / parchi)
+
+- **Navigazione**: tab o sezioni dedicate nella sidebar o pagine route-light (`#comuni`, `#gruppi`, `#parchi`) senza SPA pesante.
+- **Comuni**: tabella esistente → ordinamento colonne, colonne configurabili, sticky header.
+- **Aggregazioni**: tabella gruppi con tipo, n° comuni, link “dettaglio” / zoom mappa (già parzialmente presente).
+- **Parchi** (post-dati §2): tabella con nome, tipo, regioni/province toccate, azioni “zoom” / “dettaglio”.
+- **Responsive**: layout scroll orizzontale controllato su mobile (già affrontato per colonne stretta).
+
+## 6. Download XLS
+
+- **Export tabella corrente**: da vista lista comuni filtrata → XLSX (SheetJS o generazione server-side con `exceljs` / CSV+XLS conversion).
+- **Export selezione**: righe selezionate con checkbox → file unico con colonne allineate al datapack “business”.
+- **Backend opzionale**: `GET /api/municipalities/export.xlsx?…` con limiti e rate-limit per evitare abusi.
+- **Naming**: nome file con timestamp e filtri applicati (es. `comuni_reg9_2026.xlsx`).
+
+## 3. UX/UI — visibilità confini comunali
+
+- **Stile Leaflet**: aumentare contrasto bordo vs riempimento (peso linea, colore più scuro su zoom alto); outline-only per evitare “macchia” sul territorio.
+- **Zoom dipendente**: stile più marcato a zoom elevato; possibile outline tratteggiato per non coprire OSM.
+- **Selezione**: stato “selected” più evidente (halo / secondo contorno) coerente con tema dark della sidebar.
+- **Accessibilità**: contrasto colori secondo WCAG dove possibile.
+- **Mappa di base**: Aggiungere tiles webmapp (default, 
+[https://api.webmapp.it/tiles/14/8640/5923.png](https://api.webmapp.it/tiles/14/8640/5923.png)) e aggiungere altri layer selezionabili (OSM, satellite)
+
+## 4. Vista JSON — export CRM nel popup comune
+
+- **Popup**: pulsante “Copia JSON” o pannello espandibile con `JSON.stringify(feature.properties, …)` formattato (indentazione).
+- **Payload**: includere chiavi già esposte dall’API (`GET /api/municipalities/:procom`) coerenti con export bulk futuro.
+- **Privacy**: non esporre dati sensibili non necessari; eventuale toggle “solo campi pubblici”.
+
+## 7. Statistiche generali
+
+- **Sezione statistiche**: Aggiungere pagine che diano statistiche generali sulle varie entità territoriali presenti
+- **Statistiche Comuni**: Dashboard con grafici e mappe che rappresentano le principali statistiche presenti nel database relative ai comuni
+- **Statistiche Raggrupamenti**: Dashboard con grafici e mappe che rappresentano le principali statistiche presenti nel database relative ai raggruppamenti territoriali
+- **Statistiche Parchi e aree protette**: Dashboard con grafici e mappe che rappresentano le principali statistiche presenti nel database relative ai parchi e alle aree protette
+- **Funionalità Download PDF**: tutte le singole pagine di statistiche devono avere la possibilità di scaricare la visualizzazione a schermo in formato PDF
+
+## 8. Revisione dati territoriali
+
+- **Rivedere i tipi di raggruppamento**: rimuovere i raggruppamenti che non hanno dati
+- **Comunità Montane**: Recuperare i dati sulle Comunità montane
+
+---
+
+# DONE
+
 ## 4. Integrazione con i sentieri del Catasto REI
 
 Obiettivo: arricchire il CRM dei comuni con **sentieri (hiking routes) del Catasto REI (sda 3,4)** seguendo lo **stack datapack** (snapshot dati aggiornato raramente), usando l’API OSM2CAI v2 **solo in fase di build** (spec OpenAPI: `https://osm2cai.cai.it/docs?api-docs.json`).
@@ -18,7 +65,6 @@ Da fare:
 - **Approccio “datapack snapshot” (no dipendenze runtime)**:
   - Durante `scripts/datapack_build_from_sources.sh` (o script dedicato), scaricare/aggiornare un *cache* dei sentieri REI e poi esportare nel datapack.
   - L’app (api/web) legge solo il contenuto nel DB generato/importato dal datapack.
-
 - **DB (nuove tabelle)**:
   - `rei_hiking_routes` (id osm2cai, relation_id, ref, ref_rei, sda, cai_scale, from/to, validation_date, updated_at, issues_*, source_url, geom MultiLineString).
   - Tabelle *metriche* (valori statistici calcolati in import; “km interni”):
@@ -42,7 +88,6 @@ Da fare:
     - `municipality_rei_hiking_routes` (pro_com, osm2cai_id, sda, km_inside, computed_at)
     - utile per verificare i sentieri che contribuiscono al totale del comune.
   - Operazioni equivalenti anche per i Parchi
-
 - **Metriche anche su raggruppamenti territoriali e parchi** (in import):
   - **Gruppi**: usare `territorial_group_members` per derivare il poligono “area gruppo” come `ST_UnaryUnion(ST_Collect(m.geom))` sui comuni membri, poi sommare i km interni dei sentieri su quell’area.
   - Evitare calcoli “lazy” a runtime (coerente con datapack aggiornato raramente).
@@ -60,57 +105,9 @@ Da fare:
   - Nel popup comune: aggiungere Km totali di sentieri
   - Nella lista dei comuni: aggiungere Colonna con Km Sentieri
   - Nei filtri generali per i comuni: aggiungere Filtro "Con Sentieri SI/NO"
-
   - Nel popup parchi: aggiungere Km totali di sentieri
   - Nella lista dei parchi: aggiungere Colonna con Km Sentieri
   - Nei filtri generali per i parchi: aggiungere Filtro "Con Sentieri SI/NO"
-  
-## 3. UX/UI — visibilità confini comunali
-
-- **Stile Leaflet**: aumentare contrasto bordo vs riempimento (peso linea, colore più scuro su zoom alto); outline-only per evitare “macchia” sul territorio.
-- **Zoom dipendente**: stile più marcato a zoom elevato; possibile outline tratteggiato per non coprire OSM.
-- **Selezione**: stato “selected” più evidente (halo / secondo contorno) coerente con tema dark della sidebar.
-- **Accessibilità**: contrasto colori secondo WCAG dove possibile.
-- **Mappa di base**: Aggiungere tiles webmapp (default, 
-https://api.webmapp.it/tiles/14/8640/5923.png) e aggiungere altri layer selezionabili (OSM, satellite)
-
-## 4. Vista JSON — export CRM nel popup comune
-
-- **Popup**: pulsante “Copia JSON” o pannello espandibile con `JSON.stringify(feature.properties, …)` formattato (indentazione).
-- **Payload**: includere chiavi già esposte dall’API (`GET /api/municipalities/:procom`) coerenti con export bulk futuro.
-- **Privacy**: non esporre dati sensibili non necessari; eventuale toggle “solo campi pubblici”.
-
-## 5. Viste tabellari — enti (comuni / aggregazioni / parchi)
-
-- **Navigazione**: tab o sezioni dedicate nella sidebar o pagine route-light (`#comuni`, `#gruppi`, `#parchi`) senza SPA pesante.
-- **Comuni**: tabella esistente → ordinamento colonne, colonne configurabili, sticky header.
-- **Aggregazioni**: tabella gruppi con tipo, n° comuni, link “dettaglio” / zoom mappa (già parzialmente presente).
-- **Parchi** (post-dati §2): tabella con nome, tipo, regioni/province toccate, azioni “zoom” / “dettaglio”.
-- **Responsive**: layout scroll orizzontale controllato su mobile (già affrontato per colonne stretta).
-
-## 6. Download XLS
-
-- **Export tabella corrente**: da vista lista comuni filtrata → XLSX (SheetJS o generazione server-side con `exceljs` / CSV+XLS conversion).
-- **Export selezione**: righe selezionate con checkbox → file unico con colonne allineate al datapack “business”.
-- **Backend opzionale**: `GET /api/municipalities/export.xlsx?…` con limiti e rate-limit per evitare abusi.
-- **Naming**: nome file con timestamp e filtri applicati (es. `comuni_reg9_2026.xlsx`).
-
-## 7. Statistiche generali
-
-- **Sezione statistiche**: Aggiungere pagine che diano statistiche generali sulle varie entità territoriali presenti
-- **Statistiche Comuni**: Dashboard con grafici e mappe che rappresentano le principali statistiche presenti nel database relative ai comuni
-- **Statistiche Raggrupamenti**: Dashboard con grafici e mappe che rappresentano le principali statistiche presenti nel database relative ai raggruppamenti territoriali
-- **Statistiche Parchi e aree protette**: Dashboard con grafici e mappe che rappresentano le principali statistiche presenti nel database relative ai parchi e alle aree protette
-- **Funionalità Download PDF**: tutte le singole pagine di statistiche devono avere la possibilità di scaricare la visualizzazione a schermo in formato PDF
-
-## 8. Revisione dati territoriali
-
-- **Rivedere i tipi di raggruppamento**: rimuovere i raggruppamenti che non hanno dati
-- **Comunità Montane**: Recuperare i dati sulle Comunità montane
-
----
-
-# DONE
 
 ## 2. Dati — parchi e aree protette
 
@@ -124,7 +121,7 @@ https://api.webmapp.it/tiles/14/8640/5923.png) e aggiungere altri layer selezion
 
 - **Aggiungere licenza MIT**: includere il testo della licenza MIT del software nel repository e renderla consultabile dall’app.
 - **CTA “Info software”**: aggiungere una CTA in footer/header che apra un popup/modal con le informazioni del software.
-- **Versionamento**: definire e visualizzare la versione del software con schema a tre livelli \(major.minor.patch\) (SemVer).
+- **Versionamento**: definire e visualizzare la versione del software con schema a tre livelli major.minor.patch (SemVer).
 - **Prima release**: creare il primo rilascio ufficiale del software (versione iniziale e note di rilascio).
 - **Changelog**: introdurre e mantenere un `CHANGELOG.md` (formato tipo “Keep a Changelog”) e collegarlo dalle “Info software” (link “Changelog” o note dell’ultima release).
 - **Info nel popup**: nel popup “Info software” mostrare almeno licenza, versione attuale e link a eventuali note di rilascio.
@@ -139,3 +136,4 @@ Da fare per scala nazionale omogenea:
 - **Dataset per ogni tipo** (`group_kind`): scegliere una fonte primaria Italia o pipeline regionale ripetibile.
 - **Convenzione slug** da applicare in produzione quando si combinano più fonti (`reg-{cod}-{chiave}`, prefisso IPA, ecc.).
 - **Import batch** esterni (non solo NDJSON pilota): validazione slug duplicati prima dell’UPSERT massivo.
+
