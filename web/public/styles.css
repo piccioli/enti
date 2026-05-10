@@ -70,6 +70,62 @@ header h1 span { color: var(--accent); }
   min-width: 0;
 }
 
+/* Header tabs (Mappa | Comuni | Aggregazioni | Parchi) */
+.view-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 100%;
+  margin-left: 8px;
+}
+
+.view-tab {
+  position: relative;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .2px;
+  padding: 0 14px;
+  cursor: pointer;
+  height: 100%;
+  white-space: nowrap;
+  transition: color .12s;
+}
+
+.view-tab::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 2px;
+  background: transparent;
+  border-radius: 2px;
+  transition: background .12s;
+}
+
+.view-tab:hover { color: var(--text); }
+
+.view-tab.is-active {
+  color: var(--text);
+}
+
+.view-tab.is-active::after {
+  background: var(--accent);
+}
+
+.view-tab:focus-visible {
+  outline: none;
+  color: var(--text);
+}
+
+.view-tab:focus-visible::after {
+  background: var(--accent);
+}
+
 .btn-softinfo {
   background: transparent;
   border: 1px solid var(--border);
@@ -600,6 +656,93 @@ tbody td.code {
   z-index: 0;
 }
 
+/* List view (alternative to map) */
+.list-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+
+body.list-mode #map {
+  display: none !important;
+}
+
+body.list-mode #sidebar-resizer {
+  display: none;
+}
+
+body.list-mode #sidebar {
+  width: 320px;
+  min-width: 280px;
+  max-width: 360px;
+  flex: 0 0 320px;
+}
+
+body.list-mode #list-area.hidden {
+  display: none;
+}
+
+body:not(.list-mode) #list-area {
+  display: none !important;
+}
+
+/* In list-mode, the moved table-area should fill the list-area instead of the sidebar inner column. */
+body.list-mode #list-area #table-area {
+  flex: 1;
+  min-height: 0;
+}
+
+body.list-mode #list-area #pagination {
+  border-top: 1px solid var(--border);
+}
+
+/* The export-bar and result-bar inside #list-area inherit existing styles. */
+
+/* Sort indicators on column headers */
+thead th[data-sort] {
+  position: relative;
+  padding-right: 22px;
+}
+
+thead th[data-sort]::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  opacity: 0.18;
+  transform: translateY(-2px);
+  transition: opacity .12s, border-top-color .12s, border-bottom-color .12s, transform .12s;
+}
+
+thead th[data-sort].is-sorted-asc::after {
+  border-top: 0;
+  border-bottom: 5px solid var(--accent);
+  opacity: 1;
+  transform: translateY(-3px);
+}
+
+thead th[data-sort].is-sorted-desc::after {
+  border-top-color: var(--accent);
+  opacity: 1;
+}
+
+thead th[data-sort]:hover::after {
+  opacity: 0.55;
+}
+
+thead th[data-sort].is-sorted-asc:hover::after,
+thead th[data-sort].is-sorted-desc:hover::after {
+  opacity: 1;
+}
+
 /* Leaflet overrides */
 .leaflet-container { background: #1a2540; }
 .leaflet-popup-content-wrapper {
@@ -847,4 +990,25 @@ tbody td.code {
   }
   .sidebar-resizer { display: none; }
   #map { min-height: 50vh; }
+
+  body.list-mode #sidebar {
+    width: 100%;
+    height: auto;
+    max-height: 45vh;
+    flex: 0 0 auto;
+    max-width: 100%;
+    overflow-y: auto;
+  }
+
+  body.list-mode #list-area {
+    flex: 1;
+    min-height: 50vh;
+  }
+
+  .view-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .view-tab { padding: 0 10px; }
 }

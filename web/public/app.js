@@ -12,12 +12,17 @@ const state = {
   page: 0,
   total: 0,
   selectedProCom: null,
-  /** 'comuni' | 'parchi' */
+  /** 'comuni' | 'parchi' — controlla i layer mappa quando view === 'mappa' */
   searchMode: 'comuni',
+  /** 'mappa' | 'comuni' | 'aggregazioni' | 'parchi' — vista principale dell'app */
+  view: 'mappa',
   selectedProtectedId: null,
   /** Tipologia EUAP → visibile (`false` = nascosta dalla mappa). Chiave assente = visibile. */
   parkTypeChecked: {},
 };
+
+/** Storage key per persistenza ordinamento per vista lista. */
+const SORT_LS_PREFIX = 'webmapp_sort_';
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 const selReg       = document.getElementById('sel-reg');
@@ -59,6 +64,24 @@ const softwareModal = document.getElementById('software-modal');
 const swVersionEl = document.getElementById('sw-version');
 const swEnvEl = document.getElementById('sw-env');
 const swMetaErrorEl = document.getElementById('sw-meta-error');
+
+const viewTabBtns = {
+  mappa: document.getElementById('view-mappa'),
+  comuni: document.getElementById('view-comuni'),
+  aggregazioni: document.getElementById('view-aggregazioni'),
+  parchi: document.getElementById('view-parchi'),
+};
+const sidebarEl = document.getElementById('sidebar');
+const listAreaEl = document.getElementById('list-area');
+const tableAreaEl = document.getElementById('table-area');
+const resultBarEl = document.getElementById('result-bar');
+const exportBarEl = document.getElementById('export-bar');
+const filterRowMontano = chkMontanoL131 ? chkMontanoL131.closest('.filter-row') : null;
+const filterRowContacts = chkHasContacts ? chkHasContacts.closest('.filter-row') : null;
+const filterRowRei = chkWithRei ? chkWithRei.closest('.filter-row') : null;
+const searchModeRow = document.querySelector('.filter-row-search-mode');
+const groupPanelEl = document.querySelector('.group-panel');
+const groupSelectsRow = selGroup ? selGroup.closest('.filter-row') : null;
 
 const selected = new Set(); // pro_com selezionati (export)
 
@@ -342,26 +365,35 @@ function visibleParkFeaturesForBounds(gj) {
 const THEAD_COMUNI_ROW = `
   <tr>
     <th class="col-check"><input id="chk-all" type="checkbox" aria-label="Seleziona tutti" /></th>
-    <th>Comune</th>
-    <th>Prov</th>
-    <th>Regione</th>
-    <th class="num">Abitanti</th>
-    <th class="num" title="Quota media sul territorio (m s.l.m., ISTAT–DEM Ispra). Passa sul valore per min/max.">Quota</th>
-    <th class="num col-l131" title="Comune montano ai sensi della L. 131/2025 (elenco ministeriale)">L.&nbsp;131</th>
-    <th class="col-pec" title="PEC presente (dati open data IPA/AgID)">PEC</th>
-    <th class="col-info" title="Almeno un contatto/CF/indirizzo valorizzato (IPA)">Info</th>
-    <th class="num" title="Km totali sentieri CAI (SDA 3+4) dentro al comune">Sentieri (km)</th>
-    <th>Cod. ISTAT</th>
+    <th data-sort="comune">Comune</th>
+    <th data-sort="sigla">Prov</th>
+    <th data-sort="den_reg">Regione</th>
+    <th class="num" data-sort="popolazione_residente">Abitanti</th>
+    <th class="num" data-sort="altitudine_media_sl_m" title="Quota media sul territorio (m s.l.m., ISTAT–DEM Ispra). Passa sul valore per min/max.">Quota</th>
+    <th class="num col-l131" data-sort="comune_montano_l131" title="Comune montano ai sensi della L. 131/2025 (elenco ministeriale)">L.&nbsp;131</th>
+    <th class="col-pec" data-sort="pec" title="PEC presente (dati open data IPA/AgID)">PEC</th>
+    <th class="col-info" data-sort="has_info" title="Almeno un contatto/CF/indirizzo valorizzato (IPA)">Info</th>
+    <th class="num" data-sort="km_sentieri_total" title="Km totali sentieri CAI (SDA 3+4) dentro al comune">Sentieri (km)</th>
+    <th data-sort="pro_com">Cod. ISTAT</th>
+  </tr>`;
+
+const THEAD_AGGREGAZIONI_ROW = `
+  <tr>
+    <th data-sort="kind_label">Tipo</th>
+    <th data-sort="label">Denominazione</th>
+    <th class="num" data-sort="member_count">Comuni</th>
+    <th data-sort="reference_year">Anno rif.</th>
+    <th data-sort="source_name">Fonte</th>
   </tr>`;
 
 const THEAD_PARCHI_ROW = `
   <tr>
-    <th>Area protetta</th>
-    <th>Tipologia</th>
-    <th>Codice</th>
-    <th class="num">Superficie</th>
-    <th class="num" title="Km totali sentieri CAI (SDA 3+4) dentro al parco">Sentieri (km)</th>
-    <th class="num">ID</th>
+    <th data-sort="name">Area protetta</th>
+    <th data-sort="area_type">Tipologia</th>
+    <th data-sort="external_code">Codice</th>
+    <th class="num" data-sort="area_km2">Superficie</th>
+    <th class="num" data-sort="km_sentieri_total" title="Km totali sentieri CAI (SDA 3+4) dentro al parco">Sentieri (km)</th>
+    <th class="num" data-sort="id">ID</th>
   </tr>`;
 
 function clearLayer(ref) { if (ref) map.removeLayer(ref); return null; }
@@ -434,32 +466,107 @@ async function apiFetch(path) {
   return res.json();
 }
 
-function applyTheadForMode() {
-  if (!theadMain) return;
-  theadMain.innerHTML = state.searchMode === 'comuni' ? THEAD_COMUNI_ROW : THEAD_PARCHI_ROW;
+/** Quale set di colonne usa la vista corrente per la tabella centrale. */
+function tableEntityForView() {
+  if (state.view === 'aggregazioni') return 'aggregazioni';
+  if (state.view === 'parchi') return 'parchi';
+  if (state.view === 'comuni') return 'comuni';
+  // Vista mappa: la tabella nella sidebar segue il searchMode.
+  return state.searchMode === 'parchi' ? 'parchi' : 'comuni';
 }
 
-function applySearchModeChrome() {
-  const isCom = state.searchMode === 'comuni';
-  searchInput.placeholder = isCom ? 'Cerca comune...' : 'Cerca area protetta…';
+function applyTheadForView() {
+  if (!theadMain) return;
+  const ent = tableEntityForView();
+  if (ent === 'aggregazioni') {
+    theadMain.innerHTML = THEAD_AGGREGAZIONI_ROW;
+  } else if (ent === 'parchi') {
+    theadMain.innerHTML = THEAD_PARCHI_ROW;
+  } else {
+    theadMain.innerHTML = THEAD_COMUNI_ROW;
+  }
+  applySortIndicatorsToThead();
+}
+
+/** Mostra / nasconde i singoli filtri e il segment mappa in base alla vista. */
+function applyViewChrome() {
+  const view = state.view;
+  const isMap = view === 'mappa';
+  const isCom = view === 'comuni' || (isMap && state.searchMode === 'comuni');
+  const isAggr = view === 'aggregazioni';
+  const isParchi = view === 'parchi' || (isMap && state.searchMode === 'parchi');
+
+  // Tab attivi nell'header
+  Object.entries(viewTabBtns).forEach(([k, btn]) => {
+    if (!btn) return;
+    const active = view === k;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+
+  // Placeholder ricerca
+  if (searchInput) {
+    if (isAggr) searchInput.placeholder = 'Cerca aggregazione…';
+    else if (isParchi && !isMap) searchInput.placeholder = 'Cerca area protetta…';
+    else if (isMap) searchInput.placeholder = state.searchMode === 'parchi' ? 'Cerca area protetta…' : 'Cerca comune...';
+    else searchInput.placeholder = 'Cerca comune...';
+  }
+
+  // Segment "Comuni / Parchi" mappa: solo in vista Mappa
+  if (searchModeRow) {
+    searchModeRow.classList.toggle('hidden', !isMap);
+  }
   if (btnSearchComuni && btnSearchParchi) {
-    btnSearchComuni.classList.toggle('segment-active', isCom);
-    btnSearchParchi.classList.toggle('segment-active', !isCom);
-    btnSearchComuni.setAttribute('aria-pressed', isCom ? 'true' : 'false');
-    btnSearchParchi.setAttribute('aria-pressed', !isCom ? 'true' : 'false');
+    const segMode = state.searchMode === 'parchi' ? 'parchi' : 'comuni';
+    btnSearchComuni.classList.toggle('segment-active', segMode === 'comuni');
+    btnSearchParchi.classList.toggle('segment-active', segMode === 'parchi');
+    btnSearchComuni.setAttribute('aria-pressed', segMode === 'comuni' ? 'true' : 'false');
+    btnSearchParchi.setAttribute('aria-pressed', segMode === 'parchi' ? 'true' : 'false');
   }
-  if (chkMontanoL131 && chkMontanoL131.closest('.filter-row')) {
-    chkMontanoL131.closest('.filter-row').classList.toggle('hidden', !isCom);
+
+  // Pannello tipologie EUAP: visibile in vista Parchi, e in vista Mappa quando searchMode=parchi
+  if (parkTypePanel) {
+    parkTypePanel.classList.toggle('hidden', !isParchi);
   }
-  if (chkHasContacts && chkHasContacts.closest('.filter-row')) {
-    chkHasContacts.closest('.filter-row').classList.toggle('hidden', !isCom);
+
+  // Provincia: nascosta in Parchi puro
+  if (filterRowProv) {
+    filterRowProv.classList.toggle('hidden', view === 'parchi');
   }
-  selGroup.disabled = !isCom;
-  selGroupKind.disabled = !isCom;
-  const exBar = document.getElementById('export-bar');
-  if (exBar) exBar.classList.toggle('hidden', !isCom);
-  if (filterRowProv) filterRowProv.classList.toggle('hidden', !isCom);
-  if (parkTypePanel) parkTypePanel.classList.toggle('hidden', isCom);
+
+  // Checkbox filtri specifici comuni
+  if (filterRowMontano) {
+    filterRowMontano.classList.toggle('hidden', !(view === 'comuni' || (isMap && state.searchMode === 'comuni')));
+  }
+  if (filterRowContacts) {
+    filterRowContacts.classList.toggle('hidden', !(view === 'comuni' || (isMap && state.searchMode === 'comuni')));
+  }
+  if (filterRowRei) {
+    // REI utile sia per comuni sia per parchi (non ha senso per aggregazioni)
+    const reiVisible = view === 'comuni' || view === 'parchi' || isMap;
+    filterRowRei.classList.toggle('hidden', !reiVisible);
+  }
+
+  // Tendine raggruppamento: nascoste in Parchi; in Aggregazioni resta solo il "kind" filter
+  if (groupPanelEl) {
+    groupPanelEl.classList.toggle('hidden', view === 'parchi');
+  }
+  if (groupSelectsRow && selGroup) {
+    // In vista Aggregazioni la selezione del gruppo passa dalla tabella, nascondi #sel-group
+    selGroup.classList.toggle('hidden', view === 'aggregazioni');
+  }
+  if (groupDetail) {
+    groupDetail.classList.toggle('hidden', view === 'aggregazioni' || view === 'parchi');
+  }
+
+  selGroup && (selGroup.disabled = view === 'parchi' || view === 'aggregazioni');
+  selGroupKind && (selGroupKind.disabled = view === 'parchi');
+
+  // Export bar: solo in vista mappa-comuni o vista comuni
+  if (exportBarEl) {
+    const showExport = (isMap && state.searchMode === 'comuni') || view === 'comuni';
+    exportBarEl.classList.toggle('hidden', !showExport);
+  }
 }
 
 async function refreshAdministrativeAreas() {
@@ -537,8 +644,8 @@ async function setSearchMode(mode) {
     provincesLayer = clearLayer(provincesLayer);
   }
 
-  applyTheadForMode();
-  applySearchModeChrome();
+  applyTheadForView();
+  applyViewChrome();
   renderRegionsLayer();
   if (next === 'comuni' && state.reg && provincesGeoCache) {
     renderProvincesLayer();
@@ -548,8 +655,275 @@ async function setSearchMode(mode) {
 }
 
 async function loadMainList() {
-  if (state.searchMode === 'comuni') await loadMunicipalities();
-  else await loadProtectedAreas();
+  const ent = (state.view === 'aggregazioni')
+    ? 'aggregazioni'
+    : (state.view === 'parchi')
+      ? 'parchi'
+      : (state.view === 'comuni')
+        ? 'comuni'
+        : (state.searchMode === 'parchi' ? 'parchi' : 'comuni');
+  if (ent === 'aggregazioni') await loadGroupsTable();
+  else if (ent === 'parchi') await loadProtectedAreas();
+  else await loadMunicipalities();
+}
+
+// ── Vista (Mappa | Comuni | Aggregazioni | Parchi) ───────────────────────────
+async function setView(next) {
+  const allowed = new Set(['mappa', 'comuni', 'aggregazioni', 'parchi']);
+  const target = allowed.has(next) ? next : 'mappa';
+  if (state.view === target) return;
+  const prev = state.view;
+  state.view = target;
+  state.page = 0;
+
+  // Cambio vista: la searchMode mappa segue la vista (Parchi -> 'parchi', altrimenti 'comuni').
+  if (target === 'parchi') {
+    state.searchMode = 'parchi';
+  } else if (target === 'comuni' || target === 'aggregazioni') {
+    state.searchMode = 'comuni';
+  }
+  // 'mappa' lascia state.searchMode invariato (segment dedicato lo gestisce).
+
+  applyViewChrome();
+  applyTheadForView();
+  applyLayoutForView();
+
+  // Selezioni di riga restano valide solo se la tabella mostra la stessa entità di prima.
+  document.querySelectorAll('#tbody tr').forEach((tr) => tr.classList.remove('selected'));
+
+  if (target === 'mappa') {
+    requestAnimationFrame(() => map.invalidateSize());
+    renderRegionsLayer();
+    if (state.searchMode === 'comuni' && state.reg && provincesGeoCache) {
+      renderProvincesLayer();
+    }
+    await refreshAdministrativeAreas();
+  } else if (prev === 'mappa') {
+    // Lasciando la mappa non serve aggiornare i layer (sono nascosti) — risparmiamo richieste.
+  }
+
+  await loadMainList();
+}
+
+/** Sposta result-bar / export-bar / table-area / pagination tra la sidebar e #list-area in base alla vista. */
+function applyLayoutForView() {
+  const isList = state.view !== 'mappa';
+  document.body.classList.toggle('list-mode', isList);
+
+  if (!sidebarEl || !listAreaEl) return;
+
+  // Riferimenti ai nodi spostabili (sopravvivono al cambio di parent).
+  const movables = [resultBarEl, exportBarEl, tableAreaEl, paginationEl].filter(Boolean);
+
+  if (isList) {
+    // Sposta i nodi dentro #list-area (in ordine).
+    movables.forEach((el) => listAreaEl.appendChild(el));
+    listAreaEl.classList.remove('hidden');
+  } else {
+    // Riporta i nodi dentro la sidebar nel loro ordine originale.
+    movables.forEach((el) => sidebarEl.appendChild(el));
+    listAreaEl.classList.add('hidden');
+  }
+}
+
+// ── Aggregazioni — tabella ───────────────────────────────────────────────────
+/** Cache dei gruppi mostrati nella pagina corrente (per click → applySelectedGroup) */
+let groupsPageCache = [];
+
+async function loadGroupsTable() {
+  const params = new URLSearchParams({
+    limit: String(PAGE_SIZE),
+    offset: String(state.page * PAGE_SIZE),
+  });
+  if (selGroupKind && selGroupKind.value) params.set('kind', selGroupKind.value);
+  if (state.reg) params.set('reg', state.reg);
+  if (state.prov) params.set('prov', state.prov);
+  if (state.q) params.set('ft', state.q);
+
+  try {
+    const items = await apiFetch(`/api/groups?${params}`);
+    const arr = Array.isArray(items) ? items : [];
+    groupsPageCache = arr;
+
+    // L'API non torna `total`: stima conservativa per la paginazione.
+    const baseOffset = state.page * PAGE_SIZE;
+    state.total = (arr.length === PAGE_SIZE)
+      ? baseOffset + arr.length + 1   // c'è probabilmente un'altra pagina
+      : baseOffset + arr.length;      // ultima pagina
+
+    renderTableGroups(arr);
+    renderPagination();
+
+    if (resultCount) {
+      resultCount.textContent = (arr.length === PAGE_SIZE)
+        ? `≥ ${state.total.toLocaleString('it-IT')} aggregazioni`
+        : `${state.total.toLocaleString('it-IT')} aggregazioni`;
+    }
+    if (resultHint) {
+      resultHint.textContent = (selGroupKind && selGroupKind.value)
+        ? `Tipo filtrato: ${selGroupKind.options[selGroupKind.selectedIndex].textContent}`
+        : 'Filtra per tipo, regione, provincia o testo per restringere l\'elenco.';
+    }
+    if (emptyState) emptyState.classList.toggle('hidden', arr.length > 0);
+  } catch (e) {
+    console.warn('Caricamento aggregazioni fallito:', e);
+    groupsPageCache = [];
+    state.total = 0;
+    if (tbody) tbody.innerHTML = '';
+    renderPagination();
+    if (resultCount) resultCount.textContent = '—';
+    if (resultHint) resultHint.textContent = 'Aggregazioni non disponibili — verificare l\'API /api/groups.';
+    if (emptyState) {
+      emptyState.textContent = 'Dati aggregazioni non disponibili.';
+      emptyState.classList.remove('hidden');
+    }
+  }
+}
+
+function renderTableGroups(items) {
+  if (!tbody) return;
+  emptyState.classList.toggle('hidden', items.length > 0);
+  emptyState.textContent = 'Nessuna aggregazione trovata.';
+  tbody.innerHTML = '';
+
+  const sorted = applySortToItems(items, 'aggregazioni');
+
+  sorted.forEach((g) => {
+    const tr = document.createElement('tr');
+    tr.dataset.groupId = String(g.id);
+    if (state.group != null && Number(g.id) === Number(state.group)) {
+      tr.classList.add('selected');
+    }
+    const refY = g.reference_year != null && g.reference_year !== ''
+      ? esc(String(g.reference_year))
+      : '—';
+    const fonte = g.source_name
+      ? (g.source_url
+          ? `<a href="${esc(normalizeUrl(g.source_url))}" target="_blank" rel="noopener" onclick="event.stopPropagation();">${esc(g.source_name)}</a>`
+          : esc(g.source_name))
+      : '—';
+    tr.innerHTML = `
+      <td>${esc(g.kind_label || g.group_kind || '—')}</td>
+      <td class="comune" title="${esc(g.label || '')}">${esc(g.label || '—')}</td>
+      <td class="num">${Number.isFinite(Number(g.member_count)) ? Number(g.member_count).toLocaleString('it-IT') : '—'}</td>
+      <td>${refY}</td>
+      <td>${fonte}</td>
+    `;
+    tr.addEventListener('click', () => {
+      // Sincronizza la tendina (utile quando si torna sulla mappa).
+      if (selGroup) {
+        const opt = [...selGroup.options].find((o) => o.value === String(g.id));
+        if (opt) selGroup.value = String(g.id);
+      }
+      applySelectedGroup();
+      document.querySelectorAll('#tbody tr').forEach((row) => row.classList.remove('selected'));
+      tr.classList.add('selected');
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+// ── Ordinamento colonne (client-side, pagina corrente) ───────────────────────
+function loadSortForEntity(ent) {
+  try {
+    const raw = localStorage.getItem(SORT_LS_PREFIX + ent);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (!parsed.key || (parsed.dir !== 'asc' && parsed.dir !== 'desc')) return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveSortForEntity(ent, sort) {
+  try {
+    if (!sort) localStorage.removeItem(SORT_LS_PREFIX + ent);
+    else localStorage.setItem(SORT_LS_PREFIX + ent, JSON.stringify(sort));
+  } catch (_) { /* ignore */ }
+}
+
+function applySortIndicatorsToThead() {
+  if (!theadMain) return;
+  const ent = tableEntityForView();
+  const sort = loadSortForEntity(ent);
+  theadMain.querySelectorAll('th[data-sort]').forEach((th) => {
+    th.classList.remove('is-sorted-asc', 'is-sorted-desc');
+    th.removeAttribute('aria-sort');
+    if (!sort) return;
+    if (th.getAttribute('data-sort') === sort.key) {
+      th.classList.add(sort.dir === 'asc' ? 'is-sorted-asc' : 'is-sorted-desc');
+      th.setAttribute('aria-sort', sort.dir === 'asc' ? 'ascending' : 'descending');
+    }
+  });
+}
+
+/** Comparatore per chiave logica. Numeri/booleani gestiti separatamente; stringhe via localeCompare. */
+function compareForKey(a, b, key) {
+  const av = readSortValue(a, key);
+  const bv = readSortValue(b, key);
+  const an = av == null || av === '';
+  const bn = bv == null || bv === '';
+  if (an && bn) return 0;
+  if (an) return 1;   // null/undefined sempre in fondo
+  if (bn) return -1;
+  if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+  if (typeof av === 'boolean' && typeof bv === 'boolean') return (av === bv) ? 0 : (av ? -1 : 1);
+  return String(av).localeCompare(String(bv), 'it', { numeric: true, sensitivity: 'base' });
+}
+
+/** Estrae il valore ordinabile per la chiave: gestisce campi sintetici (has_info, ecc.). */
+function readSortValue(item, key) {
+  if (!item) return null;
+  if (key === 'has_info') {
+    return !!(item.sito_web || item.email || item.pec || item.telefono || item.codice_fiscale || item.indirizzo_fisico);
+  }
+  if (key === 'pec') return item.pec ? 1 : 0;
+  if (key === 'comune_montano_l131') return item.comune_montano_l131 ? 1 : 0;
+  // Numeri arrivati come stringhe da Postgres (es. km_sentieri_total, area_km2)
+  if (key === 'km_sentieri_total' || key === 'area_km2'
+      || key === 'popolazione_residente' || key === 'altitudine_media_sl_m'
+      || key === 'member_count' || key === 'reference_year' || key === 'pro_com'
+      || key === 'id') {
+    const v = item[key];
+    if (v == null || v === '') return null;
+    const n = typeof v === 'number' ? v : parseFloat(String(v).replace(',', '.'));
+    return Number.isFinite(n) ? n : null;
+  }
+  return item[key];
+}
+
+function applySortToItems(items, ent) {
+  const sort = loadSortForEntity(ent);
+  if (!sort) return items;
+  const arr = items.slice();
+  const dir = sort.dir === 'desc' ? -1 : 1;
+  arr.sort((a, b) => dir * compareForKey(a, b, sort.key));
+  return arr;
+}
+
+function onTheadSortClick(e) {
+  const th = e.target.closest('th[data-sort]');
+  if (!th) return;
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.id === 'chk-all')) return;
+  const key = th.getAttribute('data-sort');
+  if (!key) return;
+  const ent = tableEntityForView();
+  const cur = loadSortForEntity(ent);
+  let next = null;
+  if (!cur || cur.key !== key) {
+    next = { key, dir: 'asc' };
+  } else if (cur.dir === 'asc') {
+    next = { key, dir: 'desc' };
+  } else {
+    next = null; // off
+  }
+  saveSortForEntity(ent, next);
+  applySortIndicatorsToThead();
+  // Re-render senza ricaricare dal server: sortiamo l'array già in memoria.
+  // Per ottenere i dati correnti, richiamiamo loadMainList (poco costoso, dataset piccolo).
+  void loadMainList();
 }
 
 async function loadProtectedAreas() {
@@ -591,7 +965,9 @@ function renderTableProtected(items) {
   emptyState.classList.toggle('hidden', items.length > 0);
   tbody.innerHTML = '';
 
-  items.forEach((row) => {
+  const sortedItems = applySortToItems(items, 'parchi');
+
+  sortedItems.forEach((row) => {
     const tr = document.createElement('tr');
     tr.dataset.protectedId = String(row.id);
     if (row.id === state.selectedProtectedId) tr.classList.add('selected');
@@ -724,10 +1100,15 @@ async function init() {
   }
 
   hideLoading();
-  applySearchModeChrome();
-  applyTheadForMode(); // allinea intestazione al tbody (sentieri REI ecc.) già dall’avvio
+  applyViewChrome();
+  applyTheadForView(); // allinea intestazione al tbody (sentieri REI ecc.) già dall’avvio
+  applyLayoutForView();
   if (btnSearchComuni) btnSearchComuni.addEventListener('click', () => void setSearchMode('comuni'));
   if (btnSearchParchi) btnSearchParchi.addEventListener('click', () => void setSearchMode('parchi'));
+  Object.entries(viewTabBtns).forEach(([key, btn]) => {
+    if (!btn) return;
+    btn.addEventListener('click', () => void setView(key));
+  });
   await loadMainList();
   updateSelectedUI();
 }
@@ -953,6 +1334,10 @@ selGroupKind.addEventListener('change', async () => {
   } catch (e) {
     console.warn(e);
   }
+  if (state.view === 'aggregazioni') {
+    state.page = 0;
+    await loadMainList();
+  }
 });
 
 selGroup.addEventListener('change', () => {
@@ -1078,9 +1463,12 @@ async function loadMunicipalities() {
 // ── Table render ─────────────────────────────────────────────────────────────
 function renderTable(items) {
   emptyState.classList.toggle('hidden', items.length > 0);
+  emptyState.textContent = 'Nessun comune trovato.';
   tbody.innerHTML = '';
 
-  items.forEach(m => {
+  const sortedItems = applySortToItems(items, 'comuni');
+
+  sortedItems.forEach(m => {
     const hasInfo = !!(m.sito_web || m.email || m.pec || m.telefono || m.codice_fiscale || m.indirizzo_fisico);
     const tr = document.createElement('tr');
     tr.dataset.proCom = String(m.pro_com);
@@ -1206,18 +1594,24 @@ function btn(label, enabled, onClick) {
   return b;
 }
 
-document.getElementById('table-area').addEventListener('change', (e) => {
-  const t = e.target;
-  if (!t || t.id !== 'chk-all') return;
-  const ca = chkAllEl();
-  if (!ca) return;
-  const checks = tbody.querySelectorAll('input[type="checkbox"][data-procom]');
-  checks.forEach((c) => {
-    const procom = parseInt(c.getAttribute('data-procom'), 10);
-    c.checked = ca.checked;
-    toggleSelected(procom, ca.checked);
+if (tableAreaEl) {
+  tableAreaEl.addEventListener('change', (e) => {
+    const t = e.target;
+    if (!t || t.id !== 'chk-all') return;
+    const ca = chkAllEl();
+    if (!ca) return;
+    const checks = tbody.querySelectorAll('input[type="checkbox"][data-procom]');
+    checks.forEach((c) => {
+      const procom = parseInt(c.getAttribute('data-procom'), 10);
+      c.checked = ca.checked;
+      toggleSelected(procom, ca.checked);
+    });
   });
-});
+}
+
+if (theadMain) {
+  theadMain.addEventListener('click', onTheadSortClick);
+}
 
 // ── Select/highlight municipality ────────────────────────────────────────────
 async function selectMunicipality(procom) {

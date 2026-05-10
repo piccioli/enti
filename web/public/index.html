@@ -23,6 +23,12 @@
     <div class="dot loading" id="db-dot"></div>
     <span id="db-label">Connessione...</span>
   </div>
+  <nav class="view-tabs" role="tablist" aria-label="Vista">
+    <button type="button" class="view-tab is-active" id="view-mappa"        role="tab" aria-selected="true">Mappa</button>
+    <button type="button" class="view-tab"           id="view-comuni"       role="tab" aria-selected="false">Comuni</button>
+    <button type="button" class="view-tab"           id="view-aggregazioni" role="tab" aria-selected="false">Aggregazioni</button>
+    <button type="button" class="view-tab"           id="view-parchi"       role="tab" aria-selected="false">Parchi</button>
+  </nav>
   <div class="header-actions">
     <div id="stats"></div>
     <button id="btn-software-info" class="btn-softinfo" type="button">Info software</button>
@@ -102,16 +108,16 @@
         <thead id="thead-main">
           <tr>
             <th class="col-check"><input id="chk-all" type="checkbox" aria-label="Seleziona tutti" /></th>
-            <th>Comune</th>
-            <th>Prov</th>
-            <th>Regione</th>
-            <th class="num">Abitanti</th>
-            <th class="num" title="Quota media sul territorio (m s.l.m., ISTAT–DEM Ispra). Passa sul valore per min/max.">Quota</th>
-            <th class="num col-l131" title="Comune montano ai sensi della L. 131/2025 (elenco ministeriale)">L.&nbsp;131</th>
-            <th class="col-pec" title="PEC presente (dati open data IPA/AgID)">PEC</th>
-            <th class="col-info" title="Almeno un contatto/CF/indirizzo valorizzato (IPA)">Info</th>
-            <th class="num" title="Km totali sentieri CAI (SDA 3+4) dentro al comune">Sentieri (km)</th>
-            <th>Cod. ISTAT</th>
+            <th data-sort="comune">Comune</th>
+            <th data-sort="sigla">Prov</th>
+            <th data-sort="den_reg">Regione</th>
+            <th class="num" data-sort="popolazione_residente">Abitanti</th>
+            <th class="num" data-sort="altitudine_media_sl_m" title="Quota media sul territorio (m s.l.m., ISTAT–DEM Ispra). Passa sul valore per min/max.">Quota</th>
+            <th class="num col-l131" data-sort="comune_montano_l131" title="Comune montano ai sensi della L. 131/2025 (elenco ministeriale)">L.&nbsp;131</th>
+            <th class="col-pec" data-sort="pec" title="PEC presente (dati open data IPA/AgID)">PEC</th>
+            <th class="col-info" data-sort="has_info" title="Almeno un contatto/CF/indirizzo valorizzato (IPA)">Info</th>
+            <th class="num" data-sort="km_sentieri_total" title="Km totali sentieri CAI (SDA 3+4) dentro al comune">Sentieri (km)</th>
+            <th data-sort="pro_com">Cod. ISTAT</th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -131,6 +137,10 @@
        tabindex="0"></div>
 
   <div id="map"></div>
+
+  <section id="list-area" class="list-area hidden" aria-label="Vista lista">
+    <!-- Al cambio vista, qui vengono spostati: #result-bar, #export-bar (solo Comuni), #table-area, #pagination -->
+  </section>
 </main>
 
 <div id="software-modal" class="modal hidden" aria-hidden="true">
