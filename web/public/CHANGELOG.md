@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-10
+### Added
+- **Sentieri REI (CAI, SDA 3–4):** import in build da GeoJSON precaricati in `datapack-dist/sentieri` (o `sentier`), senza download dall’API OSM2CAI; deduplica dello stesso `id` tra file di regioni diverse (priorità SDA più alta, poi `updated_at` più recente).
+- Endpoint **`GET /api/rei-summary`** (conteggio sentieri e km totali da geometrie) e riepilogo **km sentieri (REI)** nella riga statistiche in header.
+
+### Changed
+- Tabella comuni: intestazione **Sentieri (km)** allineata al primo caricamento (`applyTheadForMode` all’avvio e `index.html`).
+- Script **`scripts/deploy.sh`** documentato come entrypoint di deploy dello stack (`docker compose up -d --build`).
+
 ## [0.2.0] - 2026-05-09
 ### Added
 - Modalità ricerca **Parchi / aree protette (EUAP)**: layer sulla mappa (Leaflet), tabella elenco e dettaglio in popup.
