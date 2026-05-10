@@ -717,6 +717,7 @@ async function init() {
 
   hideLoading();
   applySearchModeChrome();
+  applyTheadForMode(); // allinea intestazione al tbody (sentieri REI ecc.) già dall’avvio
   if (btnSearchComuni) btnSearchComuni.addEventListener('click', () => void setSearchMode('comuni'));
   if (btnSearchParchi) btnSearchParchi.addEventListener('click', () => void setSearchMode('parchi'));
   await loadMainList();
