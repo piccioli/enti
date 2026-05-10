@@ -11,6 +11,15 @@ function parseIdsParam(raw) {
   return [...new Set(ids)].slice(0, 250);
 }
 
+const REI_STATS_JOIN = `
+  LEFT JOIN (
+    SELECT pro_com,
+           COALESCE(SUM(km_inside) FILTER (WHERE sda = 3), 0) AS km_sentieri_sda3,
+           COALESCE(SUM(km_inside) FILTER (WHERE sda = 4), 0) AS km_sentieri_sda4
+    FROM municipality_rei_stats
+    GROUP BY pro_com
+  ) rei ON rei.pro_com = m.pro_com`;
+
 // List with pagination + filters
 router.get('/', async (req, res, next) => {
   try {
@@ -22,6 +31,9 @@ router.get('/', async (req, res, next) => {
     const montL131Only = montL131Raw === '1' || montL131Raw === 'true';
     const hasContactsRaw = req.query.has_contacts;
     const hasContactsOnly = hasContactsRaw === '1' || hasContactsRaw === 'true';
+    const withReiRaw = req.query.with_rei;
+    const withRei = withReiRaw === '1' || withReiRaw === 'true' ? true
+      : withReiRaw === '0' || withReiRaw === 'false' ? false : null;
     const limit = Math.min(parseInt(req.query.limit || '50'), 200);
     const offset = parseInt(req.query.offset || '0');
 
@@ -45,6 +57,11 @@ router.get('/', async (req, res, next) => {
         m.telefono IS NOT NULL OR m.codice_fiscale IS NOT NULL OR m.indirizzo_fisico IS NOT NULL
       )`);
     }
+    if (withRei === true) {
+      conditions.push('COALESCE(rei.km_sentieri_sda3, 0) + COALESCE(rei.km_sentieri_sda4, 0) > 0');
+    } else if (withRei === false) {
+      conditions.push('(rei.pro_com IS NULL OR COALESCE(rei.km_sentieri_sda3, 0) + COALESCE(rei.km_sentieri_sda4, 0) = 0)');
+    }
 
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
 
@@ -53,7 +70,7 @@ router.get('/', async (req, res, next) => {
 
     const [countResult, dataResult] = await Promise.all([
       db.query(
-        `SELECT count(*)::int FROM municipalities m ${where}`,
+        `SELECT count(*)::int FROM municipalities m ${REI_STATS_JOIN} ${where}`,
         params.slice(0, params.length - 2)
       ),
       db.query(
@@ -63,10 +80,14 @@ router.get('/', async (req, res, next) => {
                 m.altitudine_centro_municipio_sl_m, m.altitudine_istat_anno,
                 m.comune_montano_l131,
                 m.sito_web, m.email, m.pec, m.telefono, m.codice_fiscale, m.indirizzo_fisico,
-                p.sigla, p.den_prov, r.den_reg
+                p.sigla, p.den_prov, r.den_reg,
+                COALESCE(rei.km_sentieri_sda3, 0) AS km_sentieri_sda3,
+                COALESCE(rei.km_sentieri_sda4, 0) AS km_sentieri_sda4,
+                COALESCE(rei.km_sentieri_sda3, 0) + COALESCE(rei.km_sentieri_sda4, 0) AS km_sentieri_total
          FROM municipalities m
          LEFT JOIN provinces p ON p.cod_prov = m.cod_prov
          LEFT JOIN regions r ON r.cod_reg = m.cod_reg
+         ${REI_STATS_JOIN}
          ${where}
          ORDER BY m.comune
          LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -204,10 +225,14 @@ router.get('/:procom', async (req, res, next) => {
              p.sigla, p.den_prov, p.tipo_uts,
              r.den_reg,
              ST_AsGeoJSON(m.geom)::json AS geometry,
-             ST_Area(m.geom::geography) / 1e6 AS area_km2
+             ST_Area(m.geom::geography) / 1e6 AS area_km2,
+             COALESCE(rei.km_sentieri_sda3, 0) AS km_sentieri_sda3,
+             COALESCE(rei.km_sentieri_sda4, 0) AS km_sentieri_sda4,
+             COALESCE(rei.km_sentieri_sda3, 0) + COALESCE(rei.km_sentieri_sda4, 0) AS km_sentieri_total
       FROM municipalities m
       LEFT JOIN provinces p ON p.cod_prov = m.cod_prov
       LEFT JOIN regions r ON r.cod_reg = m.cod_reg
+      ${REI_STATS_JOIN}
       WHERE m.pro_com = $1
     `, [procom]);
 

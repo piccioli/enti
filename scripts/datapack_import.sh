@@ -117,10 +117,16 @@ if ! docker compose version >/dev/null 2>&1; then
 fi
 
 echo "=== Import datapack (${DATAPACK_HOST}) sul container DB ==="
-docker compose build loader
+docker compose build loader api
 docker compose up -d db >/dev/null
 docker compose run --rm \
   -v "${DATAPACK_HOST}:/datapack:ro" \
   loader bash /loader/import_datapack.sh
+
+echo "=== Import sentieri REI (se presenti nel datapack) ==="
+docker compose run --rm \
+  -v "${DATAPACK_HOST}:/datapack:ro" \
+  -e DATAPACK_DIR=/datapack \
+  api node scripts/import_rei_datapack.js
 
 echo "OK. Riavvio api/web consigliato: docker compose up -d --build api web"

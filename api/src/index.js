@@ -24,6 +24,7 @@ app.use('/api/regions', require('./routes/regions'));
 app.use('/api/provinces', require('./routes/provinces'));
 app.use('/api/municipalities', require('./routes/municipalities'));
 app.use('/api/protected-areas', require('./routes/protected_areas'));
+app.use('/api', require('./routes/hiking_routes'));
 
 app.use((err, req, res, _next) => {
   console.error(err);

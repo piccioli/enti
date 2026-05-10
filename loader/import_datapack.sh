@@ -59,6 +59,31 @@ fi
 
 PG_CONN="PG:host=${PGHOST:-db} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER} password=${PGPASSWORD}"
 
+echo "=== Migrazione 013 (aree protette) — idempotente ==="
+PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PGUSER}" -d "${PGDATABASE}" -v ON_ERROR_STOP=1 <<'SQL'
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE TABLE IF NOT EXISTS protected_areas (
+  id SERIAL PRIMARY KEY,
+  external_code TEXT,
+  name TEXT NOT NULL,
+  area_type TEXT,
+  source_name TEXT,
+  geom geometry(MultiPolygon, 4326) NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS protected_areas_external_code_unique
+  ON protected_areas (external_code)
+  WHERE external_code IS NOT NULL AND btrim(external_code) <> '';
+CREATE INDEX IF NOT EXISTS protected_areas_geom_idx ON protected_areas USING GIST (geom);
+CREATE INDEX IF NOT EXISTS protected_areas_name_trgm_idx ON protected_areas USING gin (name gin_trgm_ops);
+CREATE TABLE IF NOT EXISTS municipality_protected_area (
+  pro_com INTEGER NOT NULL REFERENCES municipalities (pro_com) ON DELETE CASCADE,
+  protected_area_id INTEGER NOT NULL REFERENCES protected_areas (id) ON DELETE CASCADE,
+  PRIMARY KEY (pro_com, protected_area_id)
+);
+CREATE INDEX IF NOT EXISTS municipality_protected_area_area_idx
+  ON municipality_protected_area (protected_area_id);
+SQL
+
 echo "=== Svuota tabelle geografiche e raggruppamenti ==="
 PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PGUSER}" -d "${PGDATABASE}" -v ON_ERROR_STOP=1 <<'SQL'
 TRUNCATE territorial_group_members;
@@ -217,6 +242,68 @@ INSERT INTO territorial_group_members (group_id, pro_com)
 SELECT m.group_id, m.pro_com FROM _dp_members m;
 EOSQL
 fi
+
+echo "=== Migrazione 014 (sentieri REI) — idempotente ==="
+PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PGUSER}" -d "${PGDATABASE}" -v ON_ERROR_STOP=1 <<'SQL'
+CREATE TABLE IF NOT EXISTS rei_hiking_routes (
+  id INTEGER PRIMARY KEY,
+  relation_id BIGINT, ref TEXT, ref_rei TEXT, name TEXT,
+  sda SMALLINT NOT NULL CHECK (sda IN (3, 4)),
+  cai_scale TEXT, cai_scale_string TEXT,
+  from_loc TEXT, to_loc TEXT,
+  city_from TEXT, city_from_istat TEXT, region_from TEXT, region_from_istat TEXT,
+  city_to TEXT, city_to_istat TEXT, region_to TEXT, region_to_istat TEXT,
+  distance_km DOUBLE PRECISION,
+  ascent_m INTEGER, descent_m INTEGER,
+  ele_min_m INTEGER, ele_max_m INTEGER, ele_from_m INTEGER, ele_to_m INTEGER,
+  duration_forward_min INTEGER, duration_backward_min INTEGER,
+  roundtrip BOOLEAN, abstract TEXT, gpx_url TEXT,
+  validation_date DATE, survey_date DATE, osm2cai_status TEXT,
+  source_url TEXT, updated_at TIMESTAMPTZ NOT NULL, fetched_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  geom GEOMETRY(MultiLineString, 4326) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS rei_hr_geom_gix ON rei_hiking_routes USING GIST (geom);
+CREATE INDEX IF NOT EXISTS rei_hr_sda_idx ON rei_hiking_routes (sda);
+
+CREATE TABLE IF NOT EXISTS municipality_rei_hiking_routes (
+  pro_com INTEGER NOT NULL REFERENCES municipalities (pro_com) ON DELETE CASCADE,
+  osm2cai_id INTEGER NOT NULL REFERENCES rei_hiking_routes (id) ON DELETE CASCADE,
+  sda SMALLINT NOT NULL, km_inside DOUBLE PRECISION NOT NULL,
+  computed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (pro_com, osm2cai_id)
+);
+CREATE INDEX IF NOT EXISTS mhr_pro_com_idx ON municipality_rei_hiking_routes (pro_com);
+
+CREATE TABLE IF NOT EXISTS municipality_rei_stats (
+  pro_com INTEGER NOT NULL REFERENCES municipalities (pro_com) ON DELETE CASCADE,
+  sda SMALLINT NOT NULL CHECK (sda IN (3, 4)), km_inside DOUBLE PRECISION NOT NULL,
+  computed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (pro_com, sda)
+);
+
+CREATE TABLE IF NOT EXISTS protected_area_rei_hiking_routes (
+  protected_area_id INTEGER NOT NULL REFERENCES protected_areas (id) ON DELETE CASCADE,
+  osm2cai_id INTEGER NOT NULL REFERENCES rei_hiking_routes (id) ON DELETE CASCADE,
+  sda SMALLINT NOT NULL, km_inside DOUBLE PRECISION NOT NULL,
+  computed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (protected_area_id, osm2cai_id)
+);
+CREATE INDEX IF NOT EXISTS pahr_pa_idx ON protected_area_rei_hiking_routes (protected_area_id);
+
+CREATE TABLE IF NOT EXISTS protected_area_rei_stats (
+  protected_area_id INTEGER NOT NULL REFERENCES protected_areas (id) ON DELETE CASCADE,
+  sda SMALLINT NOT NULL CHECK (sda IN (3, 4)), km_inside DOUBLE PRECISION NOT NULL,
+  computed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (protected_area_id, sda)
+);
+
+CREATE TABLE IF NOT EXISTS territorial_group_rei_stats (
+  group_id INTEGER NOT NULL REFERENCES territorial_groups (id) ON DELETE CASCADE,
+  sda SMALLINT NOT NULL CHECK (sda IN (3, 4)), km_inside DOUBLE PRECISION NOT NULL,
+  computed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (group_id, sda)
+);
+SQL
 
 FINAL=$(PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST:-db}" -p "${PGPORT:-5432}" -U "${PGUSER}" -d "${PGDATABASE}" \
   -tAc "SELECT count(*) FROM municipalities")

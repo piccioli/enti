@@ -27,6 +27,7 @@ const searchInput  = document.getElementById('search-input');
 const btnReset     = document.getElementById('btn-reset');
 const chkMontanoL131 = document.getElementById('chk-montano-l131');
 const chkHasContacts = document.getElementById('chk-has-contacts');
+const chkWithRei = document.getElementById('chk-with-rei');
 function chkAllEl() {
   return document.getElementById('chk-all');
 }
@@ -349,6 +350,7 @@ const THEAD_COMUNI_ROW = `
     <th class="num col-l131" title="Comune montano ai sensi della L. 131/2025 (elenco ministeriale)">L.&nbsp;131</th>
     <th class="col-pec" title="PEC presente (dati open data IPA/AgID)">PEC</th>
     <th class="col-info" title="Almeno un contatto/CF/indirizzo valorizzato (IPA)">Info</th>
+    <th class="num" title="Km totali sentieri CAI (SDA 3+4) dentro al comune">Sentieri (km)</th>
     <th>Cod. ISTAT</th>
   </tr>`;
 
@@ -358,6 +360,7 @@ const THEAD_PARCHI_ROW = `
     <th>Tipologia</th>
     <th>Codice</th>
     <th class="num">Superficie</th>
+    <th class="num" title="Km totali sentieri CAI (SDA 3+4) dentro al parco">Sentieri (km)</th>
     <th class="num">ID</th>
   </tr>`;
 
@@ -559,6 +562,7 @@ async function loadProtectedAreas() {
   });
   if (state.reg) params.set('reg', state.reg);
   if (state.q) params.set('q', state.q);
+  if (chkWithRei && chkWithRei.checked) params.set('with_rei', '1');
 
   try {
     const data = await apiFetch(`/api/protected-areas?${params}`);
@@ -596,12 +600,17 @@ function renderTableProtected(items) {
       row.area_km2 != null && Number.isFinite(parseFloat(row.area_km2))
         ? parseFloat(row.area_km2).toFixed(1)
         : '—';
+    const kmSentieri = parseFloat(row.km_sentieri_total);
+    const kmSentieriTxt = Number.isFinite(kmSentieri) && kmSentieri > 0
+      ? kmSentieri.toFixed(1)
+      : '—';
 
     tr.innerHTML = `
       <td class="comune" title="${esc(row.name)}">${esc(row.name)}</td>
       <td>${esc(row.area_type || '—')}</td>
       <td class="code">${esc(row.external_code || '—')}</td>
       <td class="num">${km}</td>
+      <td class="num">${kmSentieriTxt}</td>
       <td class="num">${row.id}</td>
     `;
     tr.addEventListener('click', () => {
@@ -634,6 +643,7 @@ async function selectProtectedArea(id) {
       p.area_km2 != null && Number.isFinite(parseFloat(p.area_km2))
         ? `${parseFloat(p.area_km2).toFixed(1)} km²`
         : '—';
+    const kmSentieriParco = parseFloat(p.km_sentieri_total);
     L.popup()
       .setLatLng(highlightLayer.getBounds().getCenter())
       .setContent(`
@@ -642,6 +652,7 @@ async function selectProtectedArea(id) {
         <div class="meta">
           Codice: <code>${esc(p.external_code || '—')}</code><br>
           Superficie: ${areaTxt}
+          ${(Number.isFinite(kmSentieriParco) && kmSentieriParco > 0) ? `<br>Sentieri CAI: ${kmSentieriParco.toFixed(1)} km <span style="color:#64748b;font-size:11px">(SDA3: ${parseFloat(p.km_sentieri_sda3 || 0).toFixed(1)} · SDA4: ${parseFloat(p.km_sentieri_sda4 || 0).toFixed(1)})</span>` : ''}
           ${p.source_name ? `<br>Sorgente: ${esc(p.source_name)}` : ''}
         </div>
       `)
@@ -908,6 +919,13 @@ if (chkHasContacts) {
   });
 }
 
+if (chkWithRei) {
+  chkWithRei.addEventListener('change', async () => {
+    state.page = 0;
+    await loadMainList();
+  });
+}
+
 searchInput.addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(async () => {
@@ -939,6 +957,7 @@ btnReset.addEventListener('click', async () => {
   searchInput.value = '';
   if (chkMontanoL131) chkMontanoL131.checked = false;
   if (chkHasContacts) chkHasContacts.checked = false;
+  if (chkWithRei) chkWithRei.checked = false;
   selGroupKind.value = '';
   selGroup.value = '';
   resetGroupDetailEmpty();
@@ -1029,6 +1048,7 @@ async function loadMunicipalities() {
   if (state.q)    params.set('q', state.q);
   if (chkMontanoL131 && chkMontanoL131.checked) params.set('montano_l131', '1');
   if (chkHasContacts && chkHasContacts.checked) params.set('has_contacts', '1');
+  if (chkWithRei && chkWithRei.checked) params.set('with_rei', '1');
 
   const data = await apiFetch(`/api/municipalities?${params}`);
   state.total = data.total;
@@ -1057,6 +1077,11 @@ function renderTable(items) {
     tr.dataset.proCom = String(m.pro_com);
     if (m.pro_com === state.selectedProCom) tr.classList.add('selected');
 
+    const kmSentieri = parseFloat(m.km_sentieri_total);
+    const kmSentieriTxt = Number.isFinite(kmSentieri) && kmSentieri > 0
+      ? kmSentieri.toFixed(1)
+      : '—';
+
     tr.innerHTML = `
       <td class="check"><input type="checkbox" data-procom="${m.pro_com}" ${selected.has(m.pro_com) ? 'checked' : ''}></td>
       <td class="comune" title="${esc(m.comune)}">${esc(m.comune)}</td>
@@ -1067,6 +1092,7 @@ function renderTable(items) {
       <td class="num col-l131" title="${m.comune_montano_l131 ? 'Comune montano (L. 131/2025)' : ''}">${m.comune_montano_l131 ? 'Sì' : '—'}</td>
       <td class="col-pec" title="${m.pec ? esc(m.pec) : ''}">${m.pec ? 'Sì' : '—'}</td>
       <td class="col-info" title="${hasInfo ? 'Contatti/Info disponibili (clicca il comune per dettagli)' : ''}">${hasInfo ? 'Sì' : '—'}</td>
+      <td class="num">${kmSentieriTxt}</td>
       <td class="code">${m.pro_com_t || m.pro_com}</td>
     `;
 
@@ -1221,6 +1247,7 @@ async function selectMunicipality(procom) {
         : ''}
           ${p.area_km2 ? `<br>Superficie: ${parseFloat(p.area_km2).toFixed(1)} km²` : ''}
           ${p.comune_montano_l131 ? '<br><strong>Montano</strong> (L. 131/2025)' : ''}
+          ${(parseFloat(p.km_sentieri_total) > 0) ? `<br>Sentieri CAI: ${parseFloat(p.km_sentieri_total).toFixed(1)} km <span style="color:#64748b;font-size:11px">(SDA3: ${parseFloat(p.km_sentieri_sda3 || 0).toFixed(1)} · SDA4: ${parseFloat(p.km_sentieri_sda4 || 0).toFixed(1)})</span>` : ''}
           ${contatti ? `<br>${contatti}` : ''}
         </div>
       `)

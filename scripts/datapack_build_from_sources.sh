@@ -93,6 +93,16 @@ else
     api node scripts/import_protected_areas.js
 fi
 
+echo "=== Migrazione DB sentieri REI (014) ==="
+docker compose exec -T db psql -U postgres -d comuni -v ON_ERROR_STOP=1 < "${ROOT_DIR}/db/migrations/014_rei_hiking_routes.sql"
+
+echo "=== Download + import sentieri Catasto REI (SDA 3 e 4, OSM2CAI v2) ==="
+if [[ "${SKIP_REI:-0}" == "1" ]]; then
+  echo "SKIP_REI=1: import sentieri REI saltato."
+else
+  docker compose exec -T api node scripts/import_rei_hiking_routes.js
+fi
+
 docker compose run --rm \
   -e DATAPACK_DIR=/datapack \
   -e ISTAT_YEAR="${ISTAT_YEAR:-}" \

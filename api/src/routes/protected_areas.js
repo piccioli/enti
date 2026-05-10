@@ -3,12 +3,24 @@ const db = require('../db');
 
 const router = Router();
 
+const REI_STATS_JOIN = `
+  LEFT JOIN (
+    SELECT protected_area_id,
+           COALESCE(SUM(km_inside) FILTER (WHERE sda = 3), 0) AS km_sentieri_sda3,
+           COALESCE(SUM(km_inside) FILTER (WHERE sda = 4), 0) AS km_sentieri_sda4
+    FROM protected_area_rei_stats
+    GROUP BY protected_area_id
+  ) rei ON rei.protected_area_id = p.id`;
+
 /** Elenco paginato + filtri geografici (incrocio con regione/provincia). */
 router.get('/', async (req, res, next) => {
   try {
     const reg = req.query.reg ? parseInt(req.query.reg, 10) : null;
     const prov = req.query.prov ? parseInt(req.query.prov, 10) : null;
     const q = req.query.q ? req.query.q.trim() : null;
+    const withReiRaw = req.query.with_rei;
+    const withRei = withReiRaw === '1' || withReiRaw === 'true' ? true
+      : withReiRaw === '0' || withReiRaw === 'false' ? false : null;
     const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
     const offset = parseInt(req.query.offset || '0', 10);
 
@@ -35,6 +47,11 @@ router.get('/', async (req, res, next) => {
           WHERE pr.cod_prov = $${params.length} AND ST_Intersects(p.geom, pr.geom)
         )`);
     }
+    if (withRei === true) {
+      conditions.push('COALESCE(rei.km_sentieri_sda3, 0) + COALESCE(rei.km_sentieri_sda4, 0) > 0');
+    } else if (withRei === false) {
+      conditions.push('(rei.protected_area_id IS NULL OR COALESCE(rei.km_sentieri_sda3, 0) + COALESCE(rei.km_sentieri_sda4, 0) = 0)');
+    }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -43,15 +60,19 @@ router.get('/', async (req, res, next) => {
     const offIdx = params.length;
 
     const [countResult, dataResult] = await Promise.all([
-      db.query(`SELECT count(*)::int FROM protected_areas p ${where}`, params.slice(0, params.length - 2)),
+      db.query(`SELECT count(*)::int FROM protected_areas p ${REI_STATS_JOIN} ${where}`, params.slice(0, params.length - 2)),
       db.query(
         `SELECT p.id,
                 p.external_code,
                 p.name,
                 p.area_type,
                 p.source_name,
-                ST_Area(p.geom::geography) / 1e6 AS area_km2
+                ST_Area(p.geom::geography) / 1e6 AS area_km2,
+                COALESCE(rei.km_sentieri_sda3, 0) AS km_sentieri_sda3,
+                COALESCE(rei.km_sentieri_sda4, 0) AS km_sentieri_sda4,
+                COALESCE(rei.km_sentieri_sda3, 0) + COALESCE(rei.km_sentieri_sda4, 0) AS km_sentieri_total
          FROM protected_areas p
+         ${REI_STATS_JOIN}
          ${where}
          ORDER BY p.name
          LIMIT $${limIdx} OFFSET $${offIdx}`,
@@ -128,8 +149,12 @@ router.get('/:id', async (req, res, next) => {
               p.area_type,
               p.source_name,
               ST_AsGeoJSON(p.geom)::json AS geometry,
-              ST_Area(p.geom::geography) / 1e6 AS area_km2
+              ST_Area(p.geom::geography) / 1e6 AS area_km2,
+              COALESCE(rei.km_sentieri_sda3, 0) AS km_sentieri_sda3,
+              COALESCE(rei.km_sentieri_sda4, 0) AS km_sentieri_sda4,
+              COALESCE(rei.km_sentieri_sda3, 0) + COALESCE(rei.km_sentieri_sda4, 0) AS km_sentieri_total
        FROM protected_areas p
+       ${REI_STATS_JOIN}
        WHERE p.id = $1`,
       [id]
     );
