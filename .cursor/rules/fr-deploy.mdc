@@ -1,0 +1,14 @@
+---
+description: La richiesta "fr" indica il deploy via scripts/deploy.sh (non solo build web).
+alwaysApply: true
+---
+
+# Convenzione `fr` (deploy)
+
+Quando l’utente scrive **fr** (o chiede il deploy in quel senso), intendere: **eseguire lo script**
+
+`./scripts/deploy.sh`
+
+dalla **root del repository** (`docker compose up -d --build`, opzione `--import-datapack` solo se richiesta esplicitamente).
+
+Non interpretare **fr** come “solo frontend” né come `docker compose build web`; quella abbreviazione punta sempre a questo script.
