@@ -528,7 +528,9 @@ select option { background: var(--surface2); }
 
 .export-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-end;
 }
 
 .btn-export {
@@ -543,7 +545,14 @@ select option { background: var(--surface2); }
   white-space: nowrap;
 }
 
-.btn-export:hover { background: var(--accent-hover); }
+.btn-export--secondary {
+  background: var(--surface2);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.btn-export:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-export--secondary:hover:not(:disabled) { background: var(--border); }
 .btn-export:active { transform: translateY(1px); }
 .btn-export:disabled { opacity: .4; cursor: not-allowed; }
 

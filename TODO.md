@@ -1,16 +1,8 @@
 # TODO — idee e miglioramenti
 
-## 5. Viste tabellari — enti (comuni / aggregazioni / parchi)
-
-- **Navigazione**: tab o sezioni dedicate nella sidebar o pagine route-light (`#comuni`, `#gruppi`, `#parchi`) senza SPA pesante.
-- **Comuni**: tabella esistente → ordinamento colonne, colonne configurabili, sticky header.
-- **Aggregazioni**: tabella gruppi con tipo, n° comuni, link “dettaglio” / zoom mappa (già parzialmente presente).
-- **Parchi** (post-dati §2): tabella con nome, tipo, regioni/province toccate, azioni “zoom” / “dettaglio”.
-- **Responsive**: layout scroll orizzontale controllato su mobile (già affrontato per colonne stretta).
-
 ## 6. Download XLS
 
-- **Export tabella corrente**: da vista lista comuni filtrata → XLSX (SheetJS o generazione server-side con `exceljs` / CSV+XLS conversion).
+- **Export tabella corrente**: da vista tabellare comuni / aggregazioni / parchi filtrata → XLSX (SheetJS o generazione server-side con `exceljs` / CSV+XLS conversion).
 - **Export selezione**: righe selezionate con checkbox → file unico con colonne allineate al datapack “business”.
 - **Backend opzionale**: `GET /api/municipalities/export.xlsx?…` con limiti e rate-limit per evitare abusi.
 - **Naming**: nome file con timestamp e filtri applicati (es. `comuni_reg9_2026.xlsx`).
@@ -46,6 +38,14 @@
 ---
 
 # DONE
+
+## 5. Viste tabellari — enti (comuni / aggregazioni / parchi)
+
+- **Navigazione**: tab o sezioni dedicate nella sidebar o pagine route-light (`#comuni`, `#gruppi`, `#parchi`) senza SPA pesante.
+- **Comuni**: tabella esistente → ordinamento colonne, colonne configurabili, sticky header.
+- **Aggregazioni**: tabella gruppi con tipo, n° comuni, link “dettaglio” / zoom mappa (già parzialmente presente).
+- **Parchi** (post-dati §2): tabella con nome, tipo, regioni/province toccate, azioni “zoom” / “dettaglio”.
+- **Responsive**: layout scroll orizzontale controllato su mobile (già affrontato per colonne stretta).
 
 ## 4. Integrazione con i sentieri del Catasto REI
 

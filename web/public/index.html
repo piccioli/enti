@@ -98,8 +98,10 @@
     <div id="export-bar" class="export-bar">
       <span id="sel-count" class="sel-count">0 selezionati</span>
       <div class="export-actions">
-        <button class="btn-export" id="btn-export-png" disabled>Scarica immagine</button>
-        <button class="btn-export" id="btn-export-pdf" disabled>Scarica PDF</button>
+        <button type="button" class="btn-export btn-export--secondary" id="btn-export-xlsx-table">Esporta tabella (XLSX)</button>
+        <button type="button" class="btn-export btn-export--secondary" id="btn-export-xlsx-selection" disabled>Esporta selezione (XLSX)</button>
+        <button type="button" class="btn-export" id="btn-export-png" disabled>Scarica immagine</button>
+        <button type="button" class="btn-export" id="btn-export-pdf" disabled>Scarica PDF</button>
       </div>
     </div>
 
@@ -199,6 +201,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

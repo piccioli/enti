@@ -34,6 +34,13 @@ function parseIntParam(raw) {
   return Number.isFinite(n) ? n : null;
 }
 
+function parseExportIdsParam(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return [];
+  const ids = s.split(',').map((x) => parseInt(x.trim(), 10)).filter((n) => Number.isFinite(n));
+  return [...new Set(ids)].slice(0, 250);
+}
+
 /** GET / — elenco con filtri geografici/testuali opzionali */
 router.get('/', async (req, res, next) => {
   try {
@@ -202,6 +209,56 @@ router.get('/meta/kinds', (_req, res) => {
   res.json(
     Object.entries(KIND_LABELS).map(([id, label]) => ({ id, label }))
   );
+});
+
+/** Batch righe tabellari (stesso shape di GET /) per export XLSX selezione */
+router.get('/export-rows', async (req, res, next) => {
+  try {
+    const ids = parseExportIdsParam(req.query.ids);
+    if (!ids.length) return res.status(400).json({ error: 'ids parameter required' });
+
+    const selectList = `
+        g.id, g.slug, g.label, g.group_kind, g.notes,
+        g.valid_from, g.valid_to,
+        g.source_name, g.source_url, g.reference_year, g.external_id, g.is_demo,
+        (SELECT count(*)::int FROM territorial_group_members m2 WHERE m2.group_id = g.id) AS member_count,
+        (SELECT string_agg(DISTINCT r.den_reg, ', ' ORDER BY r.den_reg)
+           FROM territorial_group_members tgm
+           JOIN municipalities mm ON mm.pro_com = tgm.pro_com
+           JOIN regions r ON r.cod_reg = mm.cod_reg
+           WHERE tgm.group_id = g.id) AS regions_touched,
+        (SELECT string_agg(DISTINCT pr.sigla, ', ' ORDER BY pr.sigla)
+           FROM territorial_group_members tgm
+           JOIN municipalities mm ON mm.pro_com = tgm.pro_com
+           JOIN provinces pr ON pr.cod_prov = mm.cod_prov
+           WHERE tgm.group_id = g.id) AS provinces_touched,
+        (SELECT COALESCE(SUM(mm.popolazione_residente), 0)::bigint
+           FROM territorial_group_members tgm
+           JOIN municipalities mm ON mm.pro_com = tgm.pro_com
+           WHERE tgm.group_id = g.id) AS population_total,
+        (SELECT COALESCE(SUM(ST_Area(mm.geom::geography)) / 1e6, 0)::double precision
+           FROM territorial_group_members tgm
+           JOIN municipalities mm ON mm.pro_com = tgm.pro_com
+           WHERE tgm.group_id = g.id) AS area_km2_total,
+        (SELECT COALESCE(SUM(s.km_inside), 0)::double precision
+           FROM territorial_group_rei_stats s
+           WHERE s.group_id = g.id) AS km_sentieri_total`;
+
+    const { rows } = await db.query(
+      `SELECT ${selectList.replace(/\n\s+/g, ' ')}
+       FROM territorial_groups g
+       WHERE g.id = ANY($1::int[])
+       ORDER BY g.group_kind, g.label`,
+      [ids]
+    );
+
+    res.json(rows.map((r) => ({
+      ...r,
+      kind_label: KIND_LABELS[r.group_kind] || r.group_kind,
+    })));
+  } catch (err) {
+    next(err);
+  }
 });
 
 /** GET /:id/municipalities/geojson — FeatureCollection dei comuni membri */

@@ -3,6 +3,13 @@ const db = require('../db');
 
 const router = Router();
 
+function parseExportIdsParam(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return [];
+  const ids = s.split(',').map((x) => parseInt(x.trim(), 10)).filter((n) => Number.isFinite(n));
+  return [...new Set(ids)].slice(0, 250);
+}
+
 const REI_STATS_JOIN = `
   LEFT JOIN (
     SELECT protected_area_id,
@@ -198,6 +205,47 @@ router.get('/types', async (req, res, next) => {
        ORDER BY 2 DESC, 1`,
       params
     );
+    res.json({ items: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Batch righe tabellari (stesso shape di GET /) per export XLSX selezione */
+router.get('/export-rows', async (req, res, next) => {
+  try {
+    const ids = parseExportIdsParam(req.query.ids);
+    if (!ids.length) return res.status(400).json({ error: 'ids parameter required' });
+
+    const { rows } = await db.query(
+      `SELECT p.id,
+              p.external_code,
+              p.name,
+              p.area_type,
+              p.source_name,
+              ST_Area(p.geom::geography) / 1e6 AS area_km2,
+              COALESCE(rei.km_sentieri_sda3, 0) AS km_sentieri_sda3,
+              COALESCE(rei.km_sentieri_sda4, 0) AS km_sentieri_sda4,
+              COALESCE(rei.km_sentieri_sda3, 0) + COALESCE(rei.km_sentieri_sda4, 0) AS km_sentieri_total,
+              (SELECT string_agg(DISTINCT r.den_reg, ', ' ORDER BY r.den_reg)
+                 FROM regions r
+                 WHERE ST_Intersects(r.geom, p.geom)) AS regions_touched,
+              (SELECT string_agg(DISTINCT pr.sigla, ', ' ORDER BY pr.sigla)
+                 FROM provinces pr
+                 WHERE ST_Intersects(pr.geom, p.geom)) AS provinces_touched,
+              (SELECT count(*)::int
+                 FROM municipalities mm
+                 WHERE ST_Intersects(mm.geom, p.geom)) AS member_count,
+              (SELECT COALESCE(SUM(mm.popolazione_residente), 0)::bigint
+                 FROM municipalities mm
+                 WHERE ST_Intersects(mm.geom, p.geom)) AS population_total
+       FROM protected_areas p
+       ${REI_STATS_JOIN}
+       WHERE p.id = ANY($1::int[])
+       ORDER BY p.name`,
+      [ids]
+    );
+
     res.json({ items: rows });
   } catch (err) {
     next(err);

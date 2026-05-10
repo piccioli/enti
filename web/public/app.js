@@ -1,4 +1,4 @@
-/* globals L */
+/* globals L, XLSX */
 'use strict';
 
 const API = '';
@@ -37,6 +37,8 @@ function chkAllEl() {
   return document.getElementById('chk-all');
 }
 const selCountEl   = document.getElementById('sel-count');
+const btnExportXlsxTable = document.getElementById('btn-export-xlsx-table');
+const btnExportXlsxSelection = document.getElementById('btn-export-xlsx-selection');
 const btnExportPng = document.getElementById('btn-export-png');
 const btnExportPdf = document.getElementById('btn-export-pdf');
 const tbody        = document.getElementById('tbody');
@@ -84,6 +86,9 @@ const groupPanelEl = document.querySelector('.group-panel');
 const groupSelectsRow = selGroup ? selGroup.closest('.filter-row') : null;
 
 const selected = new Set(); // pro_com selezionati (export)
+const selectedGroupIds = new Set();
+const selectedProtectedIds = new Set();
+const EXPORT_SELECTION_IDS_MAX = 250;
 
 // ── Software info modal ───────────────────────────────────────────────────────
 let softwareMetaCache = null;
@@ -405,6 +410,7 @@ const THEAD_COMUNI_ROW = `
 
 const THEAD_AGGREGAZIONI_ROW = `
   <tr>
+    <th class="col-check"><input id="chk-all" type="checkbox" aria-label="Seleziona tutti" /></th>
     <th data-sort="kind_label">Tipo</th>
     <th data-sort="label">Denominazione</th>
     <th class="num" data-sort="member_count" title="Clicca il numero per vedere l'elenco dei comuni">Comuni</th>
@@ -419,6 +425,7 @@ const THEAD_AGGREGAZIONI_ROW = `
 
 const THEAD_PARCHI_ROW = `
   <tr>
+    <th class="col-check"><input id="chk-all" type="checkbox" aria-label="Seleziona tutti" /></th>
     <th data-sort="name">Area protetta</th>
     <th data-sort="area_type">Tipologia</th>
     <th data-sort="external_code">Codice</th>
@@ -499,6 +506,389 @@ async function apiFetch(path) {
   const res = await fetch(API + path);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+}
+
+function slugifyForFilename(s, maxLen) {
+  const t = String(s || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const out = t.slice(0, maxLen || 40);
+  return out || '';
+}
+
+/** Nome file XLSX con filtri vista + timestamp (evita collisioni). */
+function buildXlsxBasename(prefix) {
+  const d = new Date();
+  const ts = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
+  const parts = [prefix];
+  if (state.reg) parts.push(`reg${state.reg}`);
+  if (prefix !== 'parchi' && state.prov) parts.push(`prov${state.prov}`);
+  if (prefix === 'comuni' && state.group) parts.push(`grp${state.group}`);
+  if (prefix === 'comuni') {
+    if (chkMontanoL131 && chkMontanoL131.checked) parts.push('montano');
+    if (chkHasContacts && chkHasContacts.checked) parts.push('contatti');
+    if (chkWithRei && chkWithRei.checked) parts.push('rei');
+  }
+  if (prefix === 'parchi' && chkWithRei && chkWithRei.checked) parts.push('rei');
+  if (prefix === 'aggregazioni' && selGroupKind && selGroupKind.value) {
+    parts.push(`kind${slugifyForFilename(selGroupKind.value, 20) || selGroupKind.value}`);
+  }
+  if (state.q) {
+    const q = slugifyForFilename(state.q, 28);
+    if (q) parts.push(`q-${q}`);
+  }
+  if (prefix === 'parchi' && state.view === 'parchi') {
+    const keys = Object.keys(state.parkTypeChecked);
+    const allOn = keys.length && keys.every((k) => state.parkTypeChecked[k] !== false);
+    if (keys.length && !allOn) parts.push('euap_partial');
+  }
+  parts.push(ts);
+  const base = parts.join('_').replace(/[^\w\-]+/g, '_');
+  return `${base}.xlsx`;
+}
+
+function xlsxDownloadFromAoa(sheetName, rowsAoa, filename) {
+  if (typeof XLSX === 'undefined') {
+    alert('Impossibile generare il file XLSX: libreria non caricata.');
+    return;
+  }
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(rowsAoa);
+  XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
+  XLSX.writeFile(wb, filename);
+}
+
+const MUNICIPALITY_BUSINESS_XLS_HEADERS = [
+  ['pro_com', 'Cod. ISTAT (pro_com)'],
+  ['pro_com_t', 'Cod. ISTAT (testo)'],
+  ['comune', 'Comune'],
+  ['comune_a', 'Ulteriori denominazioni'],
+  ['cc_uts', 'Cod. catastale'],
+  ['cod_prov', 'Cod. provincia'],
+  ['cod_reg', 'Cod. regione'],
+  ['sigla', 'Prov (sigla)'],
+  ['den_prov', 'Provincia'],
+  ['den_reg', 'Regione'],
+  ['popolazione_residente', 'Popolazione residente'],
+  ['popolazione_istat_anno', 'Anno rif. popolazione'],
+  ['altitudine_min_sl_m', 'Quota min m'],
+  ['altitudine_max_sl_m', 'Quota max m'],
+  ['altitudine_media_sl_m', 'Quota media m'],
+  ['altitudine_centro_municipio_sl_m', 'Quota centro m'],
+  ['altitudine_istat_anno', 'Anno rif. altimetria'],
+  ['comune_montano_l131', 'Montano L.131'],
+  ['sito_web', 'Sito web'],
+  ['email', 'Email'],
+  ['pec', 'PEC'],
+  ['telefono', 'Telefono'],
+  ['codice_fiscale', 'Codice fiscale'],
+  ['indirizzo_fisico', 'Indirizzo'],
+  ['km_sentieri_sda3', 'Sentieri km (SDA3)'],
+  ['km_sentieri_sda4', 'Sentieri km (SDA4)'],
+  ['km_sentieri_total', 'Sentieri km (tot)'],
+  ['area_km2', 'Superficie km²'],
+];
+
+function municipalityExportQueryParams(limit, offset) {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (state.reg) params.set('reg', state.reg);
+  if (state.prov) params.set('prov', state.prov);
+  if (state.group) params.set('group', state.group);
+  if (state.q) params.set('q', state.q);
+  if (chkMontanoL131 && chkMontanoL131.checked) params.set('montano_l131', '1');
+  if (chkHasContacts && chkHasContacts.checked) params.set('has_contacts', '1');
+  if (chkWithRei && chkWithRei.checked) params.set('with_rei', '1');
+  return params;
+}
+
+async function fetchAllMunicipalitiesFiltered() {
+  const limit = 200;
+  const out = [];
+  let offset = 0;
+  let total = Infinity;
+  while (offset < total) {
+    const params = municipalityExportQueryParams(limit, offset);
+    const data = await apiFetch(`/api/municipalities?${params}`);
+    const items = data.items || [];
+    total = typeof data.total === 'number' ? data.total : items.length;
+    out.push(...items);
+    if (items.length < limit) break;
+    offset += limit;
+  }
+  return out;
+}
+
+async function fetchAllProtectedFiltered() {
+  const limit = 200;
+  const out = [];
+  let offset = 0;
+  let total = Infinity;
+  while (offset < total) {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (state.reg) params.set('reg', state.reg);
+    if (state.q) params.set('q', state.q);
+    if (chkWithRei && chkWithRei.checked) params.set('with_rei', '1');
+    if (state.view === 'parchi') {
+      const keys = Object.keys(state.parkTypeChecked);
+      if (keys.length) {
+        const allOn = keys.every((k) => state.parkTypeChecked[k] !== false);
+        if (!allOn) {
+          const selectedTypes = keys
+            .filter((k) => state.parkTypeChecked[k] !== false)
+            .map((k) => (k === '' ? '__empty__' : k));
+          if (!selectedTypes.length) return [];
+          params.set('types', selectedTypes.join(','));
+        }
+      }
+    }
+    const data = await apiFetch(`/api/protected-areas?${params}`);
+    const items = data.items || [];
+    total = typeof data.total === 'number' ? data.total : items.length;
+    out.push(...items);
+    if (items.length < limit) break;
+    offset += limit;
+  }
+  return out;
+}
+
+async function fetchAllGroupsFiltered() {
+  const limit = 500;
+  const out = [];
+  let offset = 0;
+  while (true) {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (selGroupKind && selGroupKind.value) params.set('kind', selGroupKind.value);
+    if (state.reg) params.set('reg', state.reg);
+    if (state.prov) params.set('prov', state.prov);
+    if (state.q) params.set('ft', state.q);
+    const items = await apiFetch(`/api/groups?${params}`);
+    const arr = Array.isArray(items) ? items : [];
+    out.push(...arr);
+    if (arr.length < limit) break;
+    offset += limit;
+  }
+  return out;
+}
+
+function altitudineExportPlain(m) {
+  const med = m.altitudine_media_sl_m;
+  if (med == null || med === '') return '';
+  let t = `${med}`;
+  const mi = m.altitudine_min_sl_m;
+  const ma = m.altitudine_max_sl_m;
+  if (mi != null && ma != null) t += ` (${mi}–${ma})`;
+  return t;
+}
+
+async function runExportFullTable() {
+  const ent = tableEntityForView();
+  showLoading('Export in corso…');
+  try {
+    if (ent === 'comuni') {
+      const items = await fetchAllMunicipalitiesFiltered();
+      const aoa = [[
+        'Comune', 'Prov', 'Regione', 'Abitanti', 'Quota media', 'L.131', 'PEC', 'Info',
+        'Sentieri (km)', 'Cod. ISTAT',
+      ]];
+      for (const m of items) {
+        const hasInfo = !!(m.sito_web || m.email || m.pec || m.telefono || m.codice_fiscale || m.indirizzo_fisico);
+        const km = parseFloat(m.km_sentieri_total);
+        aoa.push([
+          m.comune,
+          m.sigla || '',
+          m.den_reg || '',
+          m.popolazione_residente ?? '',
+          altitudineExportPlain(m),
+          m.comune_montano_l131 ? 'Sì' : '',
+          m.pec ? 'Sì' : '',
+          hasInfo ? 'Sì' : '',
+          Number.isFinite(km) && km > 0 ? Math.round(km * 100) / 100 : '',
+          m.pro_com_t != null ? String(m.pro_com_t) : String(m.pro_com),
+        ]);
+      }
+      xlsxDownloadFromAoa('Comuni', aoa, buildXlsxBasename('comuni'));
+      return;
+    }
+    if (ent === 'aggregazioni') {
+      const items = await fetchAllGroupsFiltered();
+      const aoa = [[
+        'Tipo', 'Denominazione', 'Comuni', 'Regioni', 'Province',
+        'Popolazione', 'Superficie km²', 'Sentieri (km)', 'Anno rif.', 'Fonte',
+      ]];
+      for (const g of items) {
+        const km = parseFloat(g.km_sentieri_total);
+        aoa.push([
+          g.kind_label || g.group_kind || '',
+          g.label || '',
+          Number.isFinite(Number(g.member_count)) ? Number(g.member_count) : '',
+          g.regions_touched || '',
+          g.provinces_touched || '',
+          g.population_total != null ? String(g.population_total) : '',
+          g.area_km2_total != null ? String(g.area_km2_total) : '',
+          Number.isFinite(km) && km > 0 ? Math.round(km * 100) / 100 : '',
+          g.reference_year != null && g.reference_year !== '' ? String(g.reference_year) : '',
+          g.source_name || '',
+        ]);
+      }
+      xlsxDownloadFromAoa('Aggregazioni', aoa, buildXlsxBasename('aggregazioni'));
+      return;
+    }
+    if (ent === 'parchi') {
+      const keys = Object.keys(state.parkTypeChecked);
+      if (state.view === 'parchi' && keys.length) {
+        const allOn = keys.every((k) => state.parkTypeChecked[k] !== false);
+        if (!allOn) {
+          const selectedTypes = keys
+            .filter((k) => state.parkTypeChecked[k] !== false)
+            .map((k) => (k === '' ? '__empty__' : k));
+          if (!selectedTypes.length) {
+            alert('Nessuna tipologia EUAP selezionata: impossibile esportare la tabella.');
+            return;
+          }
+        }
+      }
+      const items = await fetchAllProtectedFiltered();
+      const aoa = [[
+        'Area protetta', 'Tipologia', 'Codice', 'Comuni', 'Regioni', 'Province',
+        'Popolazione', 'Superficie km²', 'Sentieri (km)', 'ID',
+      ]];
+      for (const row of items) {
+        const km = parseFloat(row.km_sentieri_total);
+        const mc = Number.isFinite(Number(row.member_count)) ? Number(row.member_count) : '';
+        aoa.push([
+          row.name || '',
+          row.area_type || '',
+          row.external_code || '',
+          mc,
+          row.regions_touched || '',
+          row.provinces_touched || '',
+          row.population_total != null ? String(row.population_total) : '',
+          row.area_km2 != null ? String(row.area_km2) : '',
+          Number.isFinite(km) && km > 0 ? Math.round(km * 100) / 100 : '',
+          row.id,
+        ]);
+      }
+      xlsxDownloadFromAoa('Parchi', aoa, buildXlsxBasename('parchi'));
+    }
+  } catch (e) {
+    console.error('runExportFullTable', e);
+    alert('Esportazione tabella non riuscita (vedi console).');
+  } finally {
+    hideLoading();
+  }
+}
+
+async function runExportSelection() {
+  const ent = tableEntityForView();
+  try {
+    if (ent === 'comuni') {
+      const ids = [...selected];
+      if (!ids.length) return;
+      if (ids.length > EXPORT_SELECTION_IDS_MAX) {
+        alert(`Seleziona al massimo ${EXPORT_SELECTION_IDS_MAX} comuni, oppure usa «Esporta tabella».`);
+        return;
+      }
+      showLoading('Preparazione selezione…');
+      try {
+        const qs = `?ids=${ids.join(',')}`;
+        const stats = await apiFetch(`/api/municipalities/stats${qs}`);
+        const hdr = MUNICIPALITY_BUSINESS_XLS_HEADERS.map((h) => h[1]);
+        const keys = MUNICIPALITY_BUSINESS_XLS_HEADERS.map((h) => h[0]);
+        const aoa = [hdr];
+        for (const m of stats.items || []) {
+          const row = keys.map((key) => {
+            const v = m[key];
+            if (key === 'comune_montano_l131') return v ? 'Sì' : '';
+            return v != null ? v : '';
+          });
+          aoa.push(row);
+        }
+        xlsxDownloadFromAoa('Selezione', aoa, buildXlsxBasename('comuni_sel'));
+      } finally {
+        hideLoading();
+      }
+      return;
+    }
+
+    if (ent === 'aggregazioni') {
+      const ids = [...selectedGroupIds];
+      if (!ids.length) return;
+      if (ids.length > EXPORT_SELECTION_IDS_MAX) {
+        alert(`Seleziona al massimo ${EXPORT_SELECTION_IDS_MAX} aggregazioni.`);
+        return;
+      }
+      showLoading('Preparazione selezione…');
+      try {
+        const data = await apiFetch(`/api/groups/export-rows?ids=${ids.join(',')}`);
+        const arr = Array.isArray(data) ? data : [];
+        const aoa = [[
+          'Tipo', 'Denominazione', 'Comuni', 'Regioni', 'Province',
+          'Popolazione', 'Superficie km²', 'Sentieri (km)', 'Anno rif.', 'Fonte',
+        ]];
+        for (const g of arr) {
+          const km = parseFloat(g.km_sentieri_total);
+          aoa.push([
+            g.kind_label || '',
+            g.label || '',
+            Number.isFinite(Number(g.member_count)) ? Number(g.member_count) : '',
+            g.regions_touched || '',
+            g.provinces_touched || '',
+            g.population_total != null ? String(g.population_total) : '',
+            g.area_km2_total != null ? String(g.area_km2_total) : '',
+            Number.isFinite(km) && km > 0 ? Math.round(km * 100) / 100 : '',
+            g.reference_year != null && g.reference_year !== '' ? String(g.reference_year) : '',
+            g.source_name || '',
+          ]);
+        }
+        xlsxDownloadFromAoa('Selezione', aoa, buildXlsxBasename('aggregazioni_sel'));
+      } finally {
+        hideLoading();
+      }
+      return;
+    }
+
+    if (ent === 'parchi') {
+      const ids = [...selectedProtectedIds];
+      if (!ids.length) return;
+      if (ids.length > EXPORT_SELECTION_IDS_MAX) {
+        alert(`Seleziona al massimo ${EXPORT_SELECTION_IDS_MAX} aree protette.`);
+        return;
+      }
+      showLoading('Preparazione selezione…');
+      try {
+        const data = await apiFetch(`/api/protected-areas/export-rows?ids=${ids.join(',')}`);
+        const items = Array.isArray(data.items) ? data.items : [];
+        const aoa = [[
+          'Area protetta', 'Tipologia', 'Codice', 'Comuni', 'Regioni', 'Province',
+          'Popolazione', 'Superficie km²', 'Sentieri (km)', 'ID',
+        ]];
+        for (const row of items) {
+          const km = parseFloat(row.km_sentieri_total);
+          const mc = Number.isFinite(Number(row.member_count)) ? Number(row.member_count) : '';
+          aoa.push([
+            row.name || '',
+            row.area_type || '',
+            row.external_code || '',
+            mc,
+            row.regions_touched || '',
+            row.provinces_touched || '',
+            row.population_total != null ? String(row.population_total) : '',
+            row.area_km2 != null ? String(row.area_km2) : '',
+            Number.isFinite(km) && km > 0 ? Math.round(km * 100) / 100 : '',
+            row.id,
+          ]);
+        }
+        xlsxDownloadFromAoa('Selezione', aoa, buildXlsxBasename('parchi_sel'));
+      } finally {
+        hideLoading();
+      }
+    }
+  } catch (e) {
+    console.error('runExportSelection', e);
+    alert('Esportazione selezione non riuscita (vedi console).');
+    hideLoading();
+  }
 }
 
 /** Quale set di colonne usa la vista corrente per la tabella centrale. */
@@ -597,10 +987,22 @@ function applyViewChrome() {
   selGroup && (selGroup.disabled = view === 'parchi' || view === 'aggregazioni');
   selGroupKind && (selGroupKind.disabled = view === 'parchi');
 
-  // Export bar: solo in vista mappa-comuni o vista comuni
+  // Export bar: liste comuni (vista+mappa), aggregazioni e parchi
   if (exportBarEl) {
-    const showExport = (isMap && state.searchMode === 'comuni') || view === 'comuni';
+    const mapListExport =
+      isMap && (state.searchMode === 'comuni' || state.searchMode === 'parchi');
+    const showExport = view === 'comuni' || view === 'aggregazioni' || view === 'parchi' || mapListExport;
     exportBarEl.classList.toggle('hidden', !showExport);
+  }
+
+  const showSchedaPngPdf = view === 'comuni' || (isMap && state.searchMode === 'comuni');
+  if (btnExportPng) {
+    btnExportPng.classList.toggle('hidden', !showSchedaPngPdf);
+    if (!showSchedaPngPdf) btnExportPng.disabled = true;
+  }
+  if (btnExportPdf) {
+    btnExportPdf.classList.toggle('hidden', !showSchedaPngPdf);
+    if (!showSchedaPngPdf) btnExportPdf.disabled = true;
   }
 }
 
@@ -862,7 +1264,9 @@ function renderTableGroups(items) {
       : '—';
     const regionsTxt = g.regions_touched ? esc(g.regions_touched) : '—';
     const provincesTxt = g.provinces_touched ? esc(g.provinces_touched) : '—';
+    const gid = Number(g.id);
     tr.innerHTML = `
+      <td class="check"><input type="checkbox" data-group-id="${gid}" ${selectedGroupIds.has(gid) ? 'checked' : ''} /></td>
       <td>${esc(g.kind_label || g.group_kind || '—')}</td>
       <td class="aggr-name">${esc(g.label || '—')}</td>
       <td class="num">${memberCountTxt}</td>
@@ -875,8 +1279,9 @@ function renderTableGroups(items) {
       <td>${fonte}</td>
     `;
     tr.addEventListener('click', (e) => {
-      // Bottone elenco comuni: non triggerare la selezione di gruppo.
       const t = e.target;
+      if (t && t.tagName === 'INPUT') return;
+      // Bottone elenco comuni: non triggerare la selezione di gruppo.
       if (t && t.closest && t.closest('button.btn-link-num')) return;
       if (t && t.tagName === 'A') return;
       // Sincronizza la tendina (utile quando si torna sulla mappa).
@@ -890,6 +1295,23 @@ function renderTableGroups(items) {
     });
     tbody.appendChild(tr);
   });
+
+  tbody.querySelectorAll('input[type="checkbox"][data-group-id]').forEach((el) => {
+    el.addEventListener('click', (e) => e.stopPropagation());
+    el.addEventListener('change', (e) => {
+      const gid = parseInt(e.target.getAttribute('data-group-id'), 10);
+      toggleSelectedGroup(gid, e.target.checked);
+    });
+  });
+
+  const pageGids = sorted.map((g) => Number(g.id));
+  const allGk = pageGids.length && pageGids.every((id) => selectedGroupIds.has(id));
+  const someGk = pageGids.some((id) => selectedGroupIds.has(id));
+  const cag = chkAllEl();
+  if (cag) {
+    cag.indeterminate = !allGk && someGk;
+    cag.checked = allGk;
+  }
 }
 
 // ── Modal: lista comuni di un raggruppamento ─────────────────────────────────
@@ -1196,7 +1618,9 @@ function renderTableProtected(items) {
     const regionsTxt = row.regions_touched ? esc(row.regions_touched) : '—';
     const provincesTxt = row.provinces_touched ? esc(row.provinces_touched) : '—';
 
+    const pid = Number(row.id);
     tr.innerHTML = `
+      <td class="check"><input type="checkbox" data-protected-id="${pid}" ${selectedProtectedIds.has(pid) ? 'checked' : ''} /></td>
       <td class="aggr-name">${esc(row.name)}</td>
       <td>${esc(row.area_type || '—')}</td>
       <td class="code">${esc(row.external_code || '—')}</td>
@@ -1209,13 +1633,31 @@ function renderTableProtected(items) {
       <td class="num">${row.id}</td>
     `;
     tr.addEventListener('click', (e) => {
-      // Bottone elenco comuni: non triggerare la selezione del parco.
       const t = e.target;
+      if (t && t.tagName === 'INPUT') return;
+      // Bottone elenco comuni: non triggerare la selezione del parco.
       if (t && t.closest && t.closest('button.btn-link-num')) return;
       selectProtectedArea(row.id);
     });
     tbody.appendChild(tr);
   });
+
+  tbody.querySelectorAll('input[type="checkbox"][data-protected-id]').forEach((el) => {
+    el.addEventListener('click', (e) => e.stopPropagation());
+    el.addEventListener('change', (e) => {
+      const id = parseInt(e.target.getAttribute('data-protected-id'), 10);
+      toggleSelectedProtected(id, e.target.checked);
+    });
+  });
+
+  const pagePid = sortedItems.map((r) => Number(r.id));
+  const allPk = pagePid.length && pagePid.every((id) => selectedProtectedIds.has(id));
+  const somePk = pagePid.some((id) => selectedProtectedIds.has(id));
+  const cap = chkAllEl();
+  if (cap) {
+    cap.indeterminate = !allPk && somePk;
+    cap.checked = allPk;
+  }
 }
 
 async function selectProtectedArea(id) {
@@ -1786,10 +2228,25 @@ function renderContactsHtml(p) {
 }
 
 function updateSelectedUI() {
-  const n = selected.size;
-  selCountEl.textContent = `${n} selezionati`;
-  btnExportPng.disabled = n === 0;
-  btnExportPdf.disabled = n === 0;
+  if (!selCountEl) return;
+  const ent = tableEntityForView();
+  let n = 0;
+  let label = 'selezionati';
+  if (ent === 'comuni') {
+    n = selected.size;
+    label = n === 1 ? 'comune selezionato' : 'comuni selezionati';
+  } else if (ent === 'aggregazioni') {
+    n = selectedGroupIds.size;
+    label = n === 1 ? 'aggregazione selezionata' : 'aggregazioni selezionate';
+  } else if (ent === 'parchi') {
+    n = selectedProtectedIds.size;
+    label = n === 1 ? 'area selezionata' : 'aree selezionate';
+  }
+  selCountEl.textContent = `${n} ${label}`;
+  const pngPdfReady = ent === 'comuni' && n > 0;
+  if (btnExportPng && !btnExportPng.classList.contains('hidden')) btnExportPng.disabled = !pngPdfReady;
+  if (btnExportPdf && !btnExportPdf.classList.contains('hidden')) btnExportPdf.disabled = !pngPdfReady;
+  if (btnExportXlsxSelection) btnExportXlsxSelection.disabled = n === 0;
 }
 
 function toggleSelected(procom, checked) {
@@ -1798,8 +2255,22 @@ function toggleSelected(procom, checked) {
   updateSelectedUI();
 }
 
+function toggleSelectedGroup(groupId, checked) {
+  if (checked) selectedGroupIds.add(groupId);
+  else selectedGroupIds.delete(groupId);
+  updateSelectedUI();
+}
+
+function toggleSelectedProtected(paId, checked) {
+  if (checked) selectedProtectedIds.add(paId);
+  else selectedProtectedIds.delete(paId);
+  updateSelectedUI();
+}
+
 function clearSelection() {
   selected.clear();
+  selectedGroupIds.clear();
+  selectedProtectedIds.clear();
   updateSelectedUI();
   const ca = chkAllEl();
   if (ca) {
@@ -1838,12 +2309,30 @@ if (tableAreaEl) {
     if (!t || t.id !== 'chk-all') return;
     const ca = chkAllEl();
     if (!ca) return;
-    const checks = tbody.querySelectorAll('input[type="checkbox"][data-procom]');
-    checks.forEach((c) => {
-      const procom = parseInt(c.getAttribute('data-procom'), 10);
-      c.checked = ca.checked;
-      toggleSelected(procom, ca.checked);
-    });
+    const ent = tableEntityForView();
+    if (ent === 'comuni') {
+      tbody.querySelectorAll('input[type="checkbox"][data-procom]').forEach((c) => {
+        const procom = parseInt(c.getAttribute('data-procom'), 10);
+        c.checked = ca.checked;
+        toggleSelected(procom, ca.checked);
+      });
+      return;
+    }
+    if (ent === 'aggregazioni') {
+      tbody.querySelectorAll('input[type="checkbox"][data-group-id]').forEach((c) => {
+        const gid = parseInt(c.getAttribute('data-group-id'), 10);
+        c.checked = ca.checked;
+        toggleSelectedGroup(gid, ca.checked);
+      });
+      return;
+    }
+    if (ent === 'parchi') {
+      tbody.querySelectorAll('input[type="checkbox"][data-protected-id]').forEach((c) => {
+        const pid = parseInt(c.getAttribute('data-protected-id'), 10);
+        c.checked = ca.checked;
+        toggleSelectedProtected(pid, ca.checked);
+      });
+    }
   });
 }
 
@@ -2126,24 +2615,35 @@ async function renderCardAndCapture(kind /* 'png' | 'pdf' */) {
   pdf.save(`scheda-comuni-${Date.now()}.pdf`);
 }
 
-btnExportPng.addEventListener('click', async () => {
-  try {
-    await renderCardAndCapture('png');
-    clearSelection();
-    await loadMainList();
-  } catch (e) {
-    console.error(e);
-  }
-});
-btnExportPdf.addEventListener('click', async () => {
-  try {
-    await renderCardAndCapture('pdf');
-    clearSelection();
-    await loadMainList();
-  } catch (e) {
-    console.error(e);
-  }
-});
+if (btnExportXlsxTable) {
+  btnExportXlsxTable.addEventListener('click', () => void runExportFullTable());
+}
+if (btnExportXlsxSelection) {
+  btnExportXlsxSelection.addEventListener('click', () => void runExportSelection());
+}
+
+if (btnExportPng) {
+  btnExportPng.addEventListener('click', async () => {
+    try {
+      await renderCardAndCapture('png');
+      clearSelection();
+      await loadMainList();
+    } catch (e) {
+      console.error(e);
+    }
+  });
+}
+if (btnExportPdf) {
+  btnExportPdf.addEventListener('click', async () => {
+    try {
+      await renderCardAndCapture('pdf');
+      clearSelection();
+      await loadMainList();
+    } catch (e) {
+      console.error(e);
+    }
+  });
+}
 
 // ── Sidebar resize (persistenza larghezza) ───────────────────────────────────
 const SIDEBAR_WIDTH_LS_MAP = 'webmapp_comuni_sidebar_w_px';
