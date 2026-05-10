@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-10
+### Added
+- **Export XLSX** dalla barra azioni: **Esporta tabella** (intero risultato filtrato con paginazione client) e **Esporta selezione** (max 250 righe) per le viste Comuni, Aggregazioni e Parchi; SheetJS lato web.
+- **Checkbox di selezione** sulle tabelle Aggregazioni e Parchi (con «seleziona pagina»); conteggio selezione per entità nella barra export.
+- Estensione **`GET /api/municipalities/stats`**: colonne datapack/`business` (`comune_a`, `cc_uts`) e statistiche REI (`km_sentieri_sda*` / total) per export selezione comuni.
+- **`GET /api/municipalities/export.xlsx`**: foglio Excel lato server (exceljs), stessi filtri della lista comuni; **413** se superato il tetto righe (`MUNICIPALITIES_EXPORT_MAX_ROWS`, default 12000); rate limit dedicato (`MUNICIPALITIES_EXPORT_XLSX_RATELIMIT_MAX`).
+- **`GET /api/groups/export-rows`** e **`GET /api/protected-areas/export-rows`** (batch per `ids`, max 250) per export XLSX selezione aggregazioni/parchi.
+- Dipendenza API **exceljs** per la generazione del file `.xlsx` server-side.
+
+### Changed
+- **`#export-bar`**: visibile anche in vista Aggregazioni e Parchi (e in mappa quando l’elenco è comuni o parchi); i pulsanti **Scarica immagine/PDF** restano disponibili solo per la selezione **comuni** (scheda PNG/PDF).
+
 ## [0.4.0] - 2026-05-10
 ### Added
 - **Tab di vista nell'header**: navigazione a 4 voci `Mappa | Comuni | Aggregazioni | Parchi`. Le viste tabellari sono alternative alla mappa (la mappa scompare quando attivi una lista).
