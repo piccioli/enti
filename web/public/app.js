@@ -396,7 +396,11 @@ const THEAD_PARCHI_ROW = `
     <th data-sort="name">Area protetta</th>
     <th data-sort="area_type">Tipologia</th>
     <th data-sort="external_code">Codice</th>
-    <th class="num" data-sort="area_km2">Superficie</th>
+    <th class="num" data-sort="member_count" title="Comuni che intersecano l'area protetta — clicca il numero per l'elenco">Comuni</th>
+    <th data-sort="regions_touched">Regioni</th>
+    <th data-sort="provinces_touched">Province</th>
+    <th class="num" data-sort="population_total" title="Somma abitanti dei comuni che intersecano l'area protetta (ISTAT)">Popolazione</th>
+    <th class="num" data-sort="area_km2">Superficie km²</th>
     <th class="num" data-sort="km_sentieri_total" title="Km totali sentieri CAI (SDA 3+4) dentro al parco">Sentieri (km)</th>
     <th class="num" data-sort="id">ID</th>
   </tr>`;
@@ -915,6 +919,57 @@ function closeGroupMembersModal() {
   document.body.style.overflow = '';
 }
 
+/** Modal lista comuni intersecati da un'area protetta (riusa lo stesso modal dei gruppi). */
+async function openProtectedMembersModal(protectedId, protectedLabel) {
+  const modal = document.getElementById('group-members-modal');
+  const titleEl = document.getElementById('group-members-title');
+  const bodyEl = document.getElementById('group-members-body');
+  if (!modal || !bodyEl) return;
+  if (titleEl) titleEl.textContent = protectedLabel ? `Comuni · ${protectedLabel}` : 'Comuni dell\'area protetta';
+  bodyEl.innerHTML = '<p class="modal-loading">Caricamento elenco comuni…</p>';
+  modal.classList.remove('hidden');
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+
+  try {
+    const data = await apiFetch(`/api/protected-areas/${encodeURIComponent(protectedId)}/municipalities`);
+    const members = Array.isArray(data && data.members) ? data.members : [];
+    if (!members.length) {
+      bodyEl.innerHTML = '<p class="modal-loading">Nessun comune interseca questa area protetta.</p>';
+      return;
+    }
+    const rows = members.map((m) => `
+      <tr>
+        <td>${esc(m.comune || '—')}</td>
+        <td>${esc(m.sigla || '—')}</td>
+        <td>${esc(m.den_prov || '—')}</td>
+        <td>${esc(m.den_reg || '—')}</td>
+        <td class="code">${esc(m.pro_com_t || String(m.pro_com || ''))}</td>
+      </tr>
+    `).join('');
+    bodyEl.innerHTML = `
+      <div class="modal-members-summary">${members.length.toLocaleString('it-IT')} comuni che intersecano l'area</div>
+      <div class="modal-members-tablewrap">
+        <table class="modal-members-table">
+          <thead>
+            <tr>
+              <th>Comune</th>
+              <th>Prov</th>
+              <th>Provincia</th>
+              <th>Regione</th>
+              <th>Cod. ISTAT</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    console.warn('openProtectedMembersModal:', e);
+    bodyEl.innerHTML = '<p class="modal-loading modal-error">Errore caricamento elenco comuni.</p>';
+  }
+}
+
 // ── Ordinamento colonne (client-side, pagina corrente) ───────────────────────
 function loadSortForEntity(ent) {
   try {
@@ -1067,22 +1122,38 @@ function renderTableProtected(items) {
 
     const km =
       row.area_km2 != null && Number.isFinite(parseFloat(row.area_km2))
-        ? parseFloat(row.area_km2).toFixed(1)
+        ? parseFloat(row.area_km2).toLocaleString('it-IT', { maximumFractionDigits: 1 })
         : '—';
     const kmSentieri = parseFloat(row.km_sentieri_total);
     const kmSentieriTxt = Number.isFinite(kmSentieri) && kmSentieri > 0
-      ? kmSentieri.toFixed(1)
+      ? kmSentieri.toLocaleString('it-IT', { maximumFractionDigits: 1 })
       : '—';
+    const memberCount = Number.isFinite(Number(row.member_count)) ? Number(row.member_count) : 0;
+    const memberCountTxt = memberCount > 0
+      ? `<button type="button" class="btn-link-num" data-protected-members="${esc(String(row.id))}" data-protected-label="${esc(row.name || '')}" title="Mostra elenco comuni">${memberCount.toLocaleString('it-IT')}</button>`
+      : '—';
+    const popTotal = Number.isFinite(parseFloat(row.population_total))
+      ? parseInt(String(row.population_total), 10).toLocaleString('it-IT')
+      : '—';
+    const regionsTxt = row.regions_touched ? esc(row.regions_touched) : '—';
+    const provincesTxt = row.provinces_touched ? esc(row.provinces_touched) : '—';
 
     tr.innerHTML = `
-      <td class="comune" title="${esc(row.name)}">${esc(row.name)}</td>
+      <td class="aggr-name">${esc(row.name)}</td>
       <td>${esc(row.area_type || '—')}</td>
       <td class="code">${esc(row.external_code || '—')}</td>
+      <td class="num">${memberCountTxt}</td>
+      <td title="${regionsTxt}">${regionsTxt}</td>
+      <td title="${provincesTxt}">${provincesTxt}</td>
+      <td class="num">${popTotal}</td>
       <td class="num">${km}</td>
       <td class="num">${kmSentieriTxt}</td>
       <td class="num">${row.id}</td>
     `;
-    tr.addEventListener('click', () => {
+    tr.addEventListener('click', (e) => {
+      // Bottone elenco comuni: non triggerare la selezione del parco.
+      const t = e.target;
+      if (t && t.closest && t.closest('button.btn-link-num')) return;
       selectProtectedArea(row.id);
     });
     tbody.appendChild(tr);
@@ -1708,13 +1779,21 @@ if (theadMain) {
 
 if (tbody) {
   tbody.addEventListener('click', (e) => {
-    const btn = e.target && e.target.closest && e.target.closest('button.btn-link-num[data-group-members]');
+    const btn = e.target && e.target.closest && e.target.closest('button.btn-link-num');
     if (!btn) return;
     e.stopPropagation();
     e.preventDefault();
     const gid = btn.getAttribute('data-group-members');
-    const lbl = btn.getAttribute('data-group-label') || '';
-    if (gid) void openGroupMembersModal(gid, lbl);
+    if (gid) {
+      const lbl = btn.getAttribute('data-group-label') || '';
+      void openGroupMembersModal(gid, lbl);
+      return;
+    }
+    const pid = btn.getAttribute('data-protected-members');
+    if (pid) {
+      const lbl = btn.getAttribute('data-protected-label') || '';
+      void openProtectedMembersModal(pid, lbl);
+    }
   });
 }
 

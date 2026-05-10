@@ -70,7 +70,19 @@ router.get('/', async (req, res, next) => {
                 ST_Area(p.geom::geography) / 1e6 AS area_km2,
                 COALESCE(rei.km_sentieri_sda3, 0) AS km_sentieri_sda3,
                 COALESCE(rei.km_sentieri_sda4, 0) AS km_sentieri_sda4,
-                COALESCE(rei.km_sentieri_sda3, 0) + COALESCE(rei.km_sentieri_sda4, 0) AS km_sentieri_total
+                COALESCE(rei.km_sentieri_sda3, 0) + COALESCE(rei.km_sentieri_sda4, 0) AS km_sentieri_total,
+                (SELECT string_agg(DISTINCT r.den_reg, ', ' ORDER BY r.den_reg)
+                   FROM regions r
+                   WHERE ST_Intersects(r.geom, p.geom)) AS regions_touched,
+                (SELECT string_agg(DISTINCT pr.sigla, ', ' ORDER BY pr.sigla)
+                   FROM provinces pr
+                   WHERE ST_Intersects(pr.geom, p.geom)) AS provinces_touched,
+                (SELECT count(*)::int
+                   FROM municipalities mm
+                   WHERE ST_Intersects(mm.geom, p.geom)) AS member_count,
+                (SELECT COALESCE(SUM(mm.popolazione_residente), 0)::bigint
+                   FROM municipalities mm
+                   WHERE ST_Intersects(mm.geom, p.geom)) AS population_total
          FROM protected_areas p
          ${REI_STATS_JOIN}
          ${where}
@@ -131,6 +143,29 @@ router.get('/geojson', async (req, res, next) => {
       type: 'FeatureCollection',
       features: rows.map((r) => r.feature),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Comuni che intersecano un'area protetta (per popup elenco). */
+router.get('/:id/municipalities', async (req, res, next) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+
+    const { rows } = await db.query(
+      `SELECT m.pro_com, m.pro_com_t, m.comune, m.cod_prov, m.cod_reg,
+              p.sigla, p.den_prov, r.den_reg
+       FROM municipalities m
+       LEFT JOIN provinces p ON p.cod_prov = m.cod_prov
+       LEFT JOIN regions r   ON r.cod_reg  = m.cod_reg
+       WHERE ST_Intersects(m.geom, (SELECT geom FROM protected_areas WHERE id = $1))
+       ORDER BY m.comune`,
+      [id]
+    );
+
+    res.json({ id, members: rows });
   } catch (err) {
     next(err);
   }
