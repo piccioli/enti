@@ -6,6 +6,10 @@
  * Percorso predefinito: file in $DATAPACK_DIR/sentieri e/o $DATAPACK_DIR/sentier
  * (una sola cartella va bene; molti utenti usano `sentieri`).
  *
+ * Deduplica: lo stesso `id` OSM2CAI può comparire in export di più regioni; ne resta una
+ * riga in DB usando priorità **SDA 4 > 3**, poi **updated_at** più recente; a parità si
+ * mantiene la prima occorrenza nell’ordine di scan dei file.
+ *
  * Formati accettati per ogni file (.json / .geojson):
  *   - GeoJSON Feature
  *   - FeatureCollection
@@ -104,14 +108,34 @@ function parseUpdatedAt(p) {
   return Number.isNaN(d.getTime()) ? new Date() : d;
 }
 
-/** @returns {Promise<boolean>} true se inserito/aggiornato; false se saltato (solo SDA fuori 3/4) */
-async function upsertFromProperties(client, feat, fallbackIndex) {
+/** Preferenza fra due copie dello stesso id (regioni diverse nello zip OSM2CAI): SDA più alto, poi più recente. */
+function routeIdIsStable(p, fallbackIndex) {
+  const id =
+    toInt(p.id)
+    ?? toInt(p.osm2cai_id)
+    ?? toInt(p.ID);
+  if (id != null) return { key: id, stable: true };
+  return { key: `__fallback_${fallbackIndex}`, stable: false };
+}
+
+function duplicateShouldReplace(existing, incoming) {
+  const es = toInt(existing.p.sda) || 0;
+  const ins = toInt(incoming.p.sda) || 0;
+  if (ins !== es) return ins > es;
+  const et = parseUpdatedAt(existing.p).getTime();
+  const it = parseUpdatedAt(incoming.p).getTime();
+  return it > et;
+}
+
+/** @returns {Promise<void>} upsert una feature già deduplicata per id stabile */
+async function insertDedupedFeature(client, winner) {
+  const { feat, fallbackIndex } = winner;
   const p = feat.properties || {};
   const routeId = resolveRouteId(p, fallbackIndex);
   if (routeId == null) throw new Error('id sentiero mancante nelle properties');
 
   const sda = toInt(p.sda);
-  if (!sda || ![3, 4].includes(sda)) return false;
+  if (!sda || ![3, 4].includes(sda)) return;
 
   const geomJson = JSON.stringify(feat.geometry);
   /* GeoJSON da OSM2CAI ha spesso coordinate Z; la colonna è 2D */
@@ -153,44 +177,7 @@ async function upsertFromProperties(client, feat, fallbackIndex) {
       $29, $30, $31,
       $32, $33, $34,
       $35, $36, now(), ${geomSql}
-    )
-    ON CONFLICT (id) DO UPDATE SET
-      relation_id = EXCLUDED.relation_id,
-      ref = EXCLUDED.ref,
-      ref_rei = EXCLUDED.ref_rei,
-      name = EXCLUDED.name,
-      sda = EXCLUDED.sda,
-      cai_scale = EXCLUDED.cai_scale,
-      cai_scale_string = EXCLUDED.cai_scale_string,
-      from_loc = EXCLUDED.from_loc,
-      to_loc = EXCLUDED.to_loc,
-      city_from = EXCLUDED.city_from,
-      city_from_istat = EXCLUDED.city_from_istat,
-      region_from = EXCLUDED.region_from,
-      region_from_istat = EXCLUDED.region_from_istat,
-      city_to = EXCLUDED.city_to,
-      city_to_istat = EXCLUDED.city_to_istat,
-      region_to = EXCLUDED.region_to,
-      region_to_istat = EXCLUDED.region_to_istat,
-      distance_km = EXCLUDED.distance_km,
-      ascent_m = EXCLUDED.ascent_m,
-      descent_m = EXCLUDED.descent_m,
-      ele_min_m = EXCLUDED.ele_min_m,
-      ele_max_m = EXCLUDED.ele_max_m,
-      ele_from_m = EXCLUDED.ele_from_m,
-      ele_to_m = EXCLUDED.ele_to_m,
-      duration_forward_min = EXCLUDED.duration_forward_min,
-      duration_backward_min = EXCLUDED.duration_backward_min,
-      roundtrip = EXCLUDED.roundtrip,
-      abstract = EXCLUDED.abstract,
-      gpx_url = EXCLUDED.gpx_url,
-      validation_date = EXCLUDED.validation_date,
-      survey_date = EXCLUDED.survey_date,
-      osm2cai_status = EXCLUDED.osm2cai_status,
-      source_url = EXCLUDED.source_url,
-      updated_at = EXCLUDED.updated_at,
-      fetched_at = now(),
-      geom = EXCLUDED.geom`,
+    )`,
     [
       geomJson,
       routeId,
@@ -230,7 +217,6 @@ async function upsertFromProperties(client, feat, fallbackIndex) {
       updatedAt,
     ]
   );
-  return true;
 }
 
 function listSentierFiles(dir) {
@@ -282,13 +268,13 @@ async function main() {
   console.log(`=== Import REI da ${uniqueFiles.length} file (${rootsLabel}) ===`);
 
   const client = await db.connect();
-  let ok = 0;
   let skipped = 0;
   let skippedSda = 0;
-
-  await client.query('TRUNCATE rei_hiking_routes RESTART IDENTITY CASCADE');
-
+  /** @type {Map<number|string, { feat: object, fallbackIndex: number, p: object, basename: string }>} */
+  const winnerByKey = new Map();
   let featIndex = 0;
+  let candidatesSdaOk = 0;
+
   for (const filePath of uniqueFiles) {
     const basename = path.basename(filePath);
     let parsed;
@@ -311,20 +297,51 @@ async function main() {
 
     for (const feat of features) {
       featIndex++;
-      try {
-        const inserted = await upsertFromProperties(client, feat, featIndex);
-        if (inserted) ok++;
-        else skippedSda++;
-      } catch (e) {
-        console.warn(`  WARN ${basename} feature #${featIndex}: ${e.message}`);
+      const p = feat.properties || {};
+      const sid = routeIdIsStable(p, featIndex);
+      const sda = toInt(p.sda);
+      if (!sda || ![3, 4].includes(sda)) {
+        skippedSda++;
+        continue;
+      }
+      if (!feat.geometry) {
         skipped++;
+        continue;
+      }
+      candidatesSdaOk++;
+      const cand = {
+        feat,
+        fallbackIndex: featIndex,
+        p,
+        basename,
+      };
+      const prev = winnerByKey.get(sid.key);
+      if (!prev || duplicateShouldReplace(prev, cand)) {
+        winnerByKey.set(sid.key, cand);
       }
     }
   }
 
+  const duplicatesMerged = Math.max(0, candidatesSdaOk - winnerByKey.size);
   console.log(
-    `  Inseriti/aggiornati: ${ok}, saltati (SDA≠3/4): ${skippedSda}, altri errori: ${skipped}`
+    `  Occorrenze SDA 3/4 con geometria: ${candidatesSdaOk}; univoci dopo dedup cross-file: ${winnerByKey.size}` +
+      (duplicatesMerged ? ` (${duplicatesMerged} duplicati stesso id fuse: priorità SDA più alto, poi updated_at più recente)` : '')
   );
+
+  await client.query('TRUNCATE rei_hiking_routes RESTART IDENTITY CASCADE');
+
+  let ok = 0;
+  for (const cand of winnerByKey.values()) {
+    try {
+      await insertDedupedFeature(client, cand);
+      ok++;
+    } catch (e) {
+      console.warn(`  WARN ${cand.basename}: id=${resolveRouteId(cand.p, cand.fallbackIndex)} — ${e.message}`);
+      skipped++;
+    }
+  }
+
+  console.log(`  Inseriti: ${ok}, saltati (SDA≠3/4): ${skippedSda}, altri errori: ${skipped}`);
 
   if (process.env.SKIP_REI_METRICS !== '1') {
     await computeMetrics(client);
