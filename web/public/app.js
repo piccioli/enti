@@ -724,6 +724,9 @@ function applyLayoutForView() {
     movables.forEach((el) => sidebarEl.appendChild(el));
     listAreaEl.classList.add('hidden');
   }
+
+  // Riapplica la larghezza salvata per la vista corrente (chiavi separate map/list).
+  sidebarRestoreStoredOrCss(sidebarEl);
 }
 
 // ── Aggregazioni — tabella ───────────────────────────────────────────────────
@@ -1872,9 +1875,17 @@ btnExportPdf.addEventListener('click', async () => {
 });
 
 // ── Sidebar resize (persistenza larghezza) ───────────────────────────────────
-const SIDEBAR_WIDTH_LS = 'webmapp_comuni_sidebar_w_px';
+const SIDEBAR_WIDTH_LS_MAP = 'webmapp_comuni_sidebar_w_px';
+const SIDEBAR_WIDTH_LS_LIST = 'webmapp_comuni_sidebar_w_px_list';
 /** Layout a colonna singola */
 const mqSidebarStack = window.matchMedia('(max-width: 900px)');
+
+/** Chiave storage in base alla vista corrente (le larghezze sono indipendenti). */
+function currentSidebarLsKey() {
+  return document.body.classList.contains('list-mode')
+    ? SIDEBAR_WIDTH_LS_LIST
+    : SIDEBAR_WIDTH_LS_MAP;
+}
 
 function sidebarWidthMaxPx() {
   return Math.floor(window.innerWidth * 0.72);
@@ -1894,7 +1905,7 @@ function clearSidebarInlineWidth(sidebarEl) {
 
 function sidebarPersistWidth(sidebarEl) {
   if (mqSidebarStack.matches) return;
-  localStorage.setItem(SIDEBAR_WIDTH_LS, String(Math.round(sidebarEl.getBoundingClientRect().width)));
+  localStorage.setItem(currentSidebarLsKey(), String(Math.round(sidebarEl.getBoundingClientRect().width)));
 }
 
 function sidebarApplyPx(sidebarEl, px, { persist } = {}) {
@@ -1912,16 +1923,14 @@ function sidebarRestoreStoredOrCss(sidebarEl) {
     clearSidebarInlineWidth(sidebarEl);
     return;
   }
-  const raw = localStorage.getItem(SIDEBAR_WIDTH_LS);
-  if (raw == null || raw === '') {
-    clearSidebarInlineWidth(sidebarEl);
-    return;
-  }
+  // Pulisco eventuali inline applicati per l'altra vista, così il default CSS
+  // (25vw in list-mode, min(500px, 42vw) in map-mode) torna ad applicarsi se
+  // non è ancora stato salvato nulla per la vista corrente.
+  clearSidebarInlineWidth(sidebarEl);
+  const raw = localStorage.getItem(currentSidebarLsKey());
+  if (raw == null || raw === '') return;
   const parsed = parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
-    clearSidebarInlineWidth(sidebarEl);
-    return;
-  }
+  if (!Number.isFinite(parsed)) return;
   sidebarApplyPx(sidebarEl, parsed);
 }
 
@@ -1957,7 +1966,7 @@ function setupSidebarResize() {
   grip.addEventListener('dblclick', (e) => {
     if (mqSidebarStack.matches) return;
     e.preventDefault();
-    localStorage.removeItem(SIDEBAR_WIDTH_LS);
+    localStorage.removeItem(currentSidebarLsKey());
     clearSidebarInlineWidth(sidebarEl);
     map.invalidateSize();
   });

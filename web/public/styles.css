@@ -670,15 +670,11 @@ body.list-mode #map {
   display: none !important;
 }
 
-body.list-mode #sidebar-resizer {
-  display: none;
-}
-
 body.list-mode #sidebar {
-  width: 320px;
+  width: 25vw;
   min-width: 280px;
-  max-width: 360px;
-  flex: 0 0 320px;
+  max-width: 72vw;
+  flex: 0 0 25vw;
 }
 
 body.list-mode #list-area.hidden {
