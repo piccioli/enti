@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Deploy stack (docker compose build + up). In chat progetto «fr» = lanciare questo script.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

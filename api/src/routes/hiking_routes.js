@@ -3,6 +3,30 @@ const db = require('../db');
 
 const router = Router();
 
+/** Totali globali (header app): n. sentieri SDA 3–4 e km cumulative della geometria (catalogo). */
+router.get('/rei-summary', async (req, res, next) => {
+  try {
+    const { rows: ex } = await db.query(
+      `SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'rei_hiking_routes') AS e`
+    );
+    if (!ex[0]?.e) {
+      return res.json({ routes_count: 0, total_km: 0 });
+    }
+
+    const { rows } = await db.query(
+      `SELECT count(*)::int AS routes_count,
+              (COALESCE(SUM(ST_Length(geom::geography)), 0) / 1000.0)::double precision AS total_km
+       FROM rei_hiking_routes`
+    );
+
+    res.json(rows[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
 /** Sentieri REI che intersecano un comune. */
 router.get('/municipalities/:procom/rei-hiking-routes', async (req, res, next) => {
   try {

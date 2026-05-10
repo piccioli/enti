@@ -693,17 +693,25 @@ async function init() {
   regionsGeoCache = await apiFetch('/api/regions/geojson');
   renderRegionsLayer();
 
-  const [total, paHead] = await Promise.all([
+  const [total, paHead, reiHead] = await Promise.all([
     apiFetch('/api/municipalities?limit=1&offset=0'),
     apiFetch('/api/protected-areas?limit=1&offset=0').catch(() => null),
+    apiFetch('/api/rei-summary').catch(() => null),
   ]);
-  const comuniTxt = `${total.total.toLocaleString('it-IT')} comuni totali`;
+  const parts = [`${total.total.toLocaleString('it-IT')} comuni totali`];
   if (paHead && typeof paHead.total === 'number') {
-    statsEl.textContent =
-      `${comuniTxt} · ${paHead.total.toLocaleString('it-IT')} parchi e aree protette`;
-  } else {
-    statsEl.textContent = comuniTxt;
+    parts.push(`${paHead.total.toLocaleString('it-IT')} parchi e aree protette`);
   }
+  const reiKm = reiHead != null ? Number(reiHead.total_km) : NaN;
+  const reiCount = reiHead != null ? Number(reiHead.routes_count) : 0;
+  if (reiHead && reiCount > 0 && Number.isFinite(reiKm) && reiKm > 0) {
+    const kmTxt = reiKm.toLocaleString('it-IT', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 1,
+    });
+    parts.push(`${kmTxt} km sentieri (REI)`);
+  }
+  statsEl.textContent = parts.join(' · ');
 
   try {
     await loadGroupKinds();
