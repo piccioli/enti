@@ -2,7 +2,7 @@
 
 ## 4. Integrazione con i sentieri del Catasto REI
 
-Obiettivo: arricchire il CRM dei comuni con **sentieri (hiking routes) del Catasto REI** seguendo lo **stack datapack** (snapshot dati aggiornato raramente), usando l’API OSM2CAI v2 **solo in fase di build** (spec OpenAPI: `https://osm2cai.cai.it/docs?api-docs.json`).
+Obiettivo: arricchire il CRM dei comuni con **sentieri (hiking routes) del Catasto REI (sda 3,4)** seguendo lo **stack datapack** (snapshot dati aggiornato raramente), usando l’API OSM2CAI v2 **solo in fase di build** (spec OpenAPI: `https://osm2cai.cai.it/docs?api-docs.json`).
 
 API OSM2CAI utili (v2):
 
@@ -13,12 +13,11 @@ API OSM2CAI utili (v2):
   - `GET /api/v2/hiking-route/{id}` (Feature GeoJSON con `properties.id`, `properties.relation_id`, `properties.ref`, `properties.sda`, `properties.validation_date`, ecc.)
   - `GET /api/v2/hiking-route-tdh/{id}` (Feature GeoJSON “TDH”, include `ref_REI`, `gpx_url`, ecc.)
 
-Da fare (proposta implementativa nel repo):
+Da fare:
 
 - **Approccio “datapack snapshot” (no dipendenze runtime)**:
   - Durante `scripts/datapack_build_from_sources.sh` (o script dedicato), scaricare/aggiornare un *cache* dei sentieri REI e poi esportare nel datapack.
   - L’app (api/web) legge solo il contenuto nel DB generato/importato dal datapack.
-  - Se serve aggiornamento “incrementale” tra due build, usare `{id -> updated_at}` come indice ma sempre dentro la build (non on-demand).
 
 - **DB (nuove tabelle)**:
   - `rei_hiking_routes` (id osm2cai, relation_id, ref, ref_rei, sda, cai_scale, from/to, validation_date, updated_at, issues_*, source_url, geom MultiLineString).
@@ -28,11 +27,12 @@ Da fare (proposta implementativa nel repo):
     - `protected_area_rei_stats` (protected_area_id, sda, km_inside, computed_at) *(attivabile quando §2 è implementato)*
 - **Ingest/aggiornamento (durante build datapack)**:
   - Script `api/scripts/import_rei_hiking_routes.js` che:
-    - prende input `--region-code` oppure `--bbox` e `--sda` (default consigliato: `sda=4` validati).
-    - usa l’indice `{id -> updated_at}` per capire cosa scaricare/refreshare (cache locale tra build).
-    - per ogni id scarica `hiking-route-tdh/{id}` (o `hiking-route/{id}` se basta) e upserta in `rei_hiking_routes`.
+    - prende input `--region-code` (sda fissati a 3,4)
+    - scarica sempre tutta italia
+    - per ogni id scarica `hiking-route/{id}` e upserta in `rei_hiking_routes`.
     - gestisce rate limit / retry (429/5xx) e salvataggio progressivo (checkpoint su file) per rendere la build ripetibile.
-- **Associazione ai comuni**:
+    - output a schermo che mostra in maniera chiara qule regione si sta scaricando e stato avanzamento lavori
+- **Associazione ai comuni e Parchi**:
   - Precompute (in build): metrica principale = **km totali di sentieri in SDA=3/4 dentro a un poligono** (comune / gruppo / parco).
   - Regola: “solo interni” ⇒ se il sentiero attraversa i confini, si considera **solo la porzione** ottenuta con `ST_Intersection(poligono, sentiero)`.
   - Calcolo consigliato (PostGIS):
@@ -41,10 +41,10 @@ Da fare (proposta implementativa nel repo):
   - (Opzionale) mantenere anche una tabella di dettaglio per debug/QA:
     - `municipality_rei_hiking_routes` (pro_com, osm2cai_id, sda, km_inside, computed_at)
     - utile per verificare i sentieri che contribuiscono al totale del comune.
+  - Operazioni equivalenti anche per i Parchi
 
 - **Metriche anche su raggruppamenti territoriali e parchi** (in import):
   - **Gruppi**: usare `territorial_group_members` per derivare il poligono “area gruppo” come `ST_UnaryUnion(ST_Collect(m.geom))` sui comuni membri, poi sommare i km interni dei sentieri su quell’area.
-  - **Parchi**: stessa metrica su `protected_areas.geom` (quando disponibile), scrivendo su `protected_area_rei_stats`.
   - Evitare calcoli “lazy” a runtime (coerente con datapack aggiornato raramente).
 - **API interna (nostra)**:
   - `GET /api/municipalities/:pro_com/rei-hiking-routes` (lista sentieri che intersecano il comune, con campi minimi + link `public_page`/`gpx_url`).
@@ -57,9 +57,14 @@ Da fare (proposta implementativa nel repo):
     - `territorial_group_rei_stats.json` (group_id → km_inside_sda3/km_inside_sda4)
     - `protected_area_rei_stats.json` (protected_area_id → km_inside_sda3/km_inside_sda4)
 - **UI (web)**:
-  - Nel popup comune: sezione “Sentieri REI” con contatore, lista filtrabile (per `sda`, `ref`, `cai_scale`) e bottone “Apri su osm2cai”.
-  - Layer mappa: visualizza sentieri selezionati (o quelli del comune attivo) con stile per `sda`/`cai_scale`.
+  - Nel popup comune: aggiungere Km totali di sentieri
+  - Nella lista dei comuni: aggiungere Colonna con Km Sentieri
+  - Nei filtri generali per i comuni: aggiungere Filtro "Con Sentieri SI/NO"
 
+  - Nel popup parchi: aggiungere Km totali di sentieri
+  - Nella lista dei parchi: aggiungere Colonna con Km Sentieri
+  - Nei filtri generali per i parchi: aggiungere Filtro "Con Sentieri SI/NO"
+  
 ## 3. UX/UI — visibilità confini comunali
 
 - **Stile Leaflet**: aumentare contrasto bordo vs riempimento (peso linea, colore più scuro su zoom alto); outline-only per evitare “macchia” sul territorio.
