@@ -23,6 +23,11 @@ router.get('/', async (req, res, next) => {
       : withReiRaw === '0' || withReiRaw === 'false' ? false : null;
     const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
     const offset = parseInt(req.query.offset || '0', 10);
+    // CSV di area_type ammessi; '__empty__' rappresenta NULL/stringa vuota.
+    const typesRaw = req.query.types ? String(req.query.types) : null;
+    const types = typesRaw
+      ? typesRaw.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
+      : null;
 
     const conditions = [];
     const params = [];
@@ -30,6 +35,23 @@ router.get('/', async (req, res, next) => {
     if (q) {
       params.push(`%${q}%`);
       conditions.push(`p.name ILIKE $${params.length}`);
+    }
+    if (types) {
+      if (types.length === 0) {
+        // Whitelist vuota (es. tutti i checkbox spenti) → nessun risultato.
+        return res.json({ total: 0, items: [] });
+      }
+      const includesEmpty = types.includes('__empty__');
+      const realTypes = types.filter((t) => t !== '__empty__');
+      const ors = [];
+      if (realTypes.length) {
+        params.push(realTypes);
+        ors.push(`p.area_type = ANY($${params.length}::text[])`);
+      }
+      if (includesEmpty) {
+        ors.push(`(p.area_type IS NULL OR btrim(p.area_type) = '')`);
+      }
+      if (ors.length) conditions.push(`(${ors.join(' OR ')})`);
     }
     if (reg != null && !Number.isNaN(reg)) {
       params.push(reg);
@@ -143,6 +165,40 @@ router.get('/geojson', async (req, res, next) => {
       type: 'FeatureCollection',
       features: rows.map((r) => r.feature),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Conteggio aree protette raggruppate per `area_type`, opzionalmente filtrate per regione/provincia. */
+router.get('/types', async (req, res, next) => {
+  try {
+    const reg = req.query.reg ? parseInt(req.query.reg, 10) : null;
+    const prov = req.query.prov ? parseInt(req.query.prov, 10) : null;
+    const params = [];
+    const conds = [];
+    if (prov != null && !Number.isNaN(prov)) {
+      params.push(prov);
+      conds.push(
+        `EXISTS (SELECT 1 FROM provinces pr WHERE pr.cod_prov = $${params.length} AND ST_Intersects(p.geom, pr.geom))`
+      );
+    } else if (reg != null && !Number.isNaN(reg)) {
+      params.push(reg);
+      conds.push(
+        `EXISTS (SELECT 1 FROM regions r WHERE r.cod_reg = $${params.length} AND ST_Intersects(p.geom, r.geom))`
+      );
+    }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+    const { rows } = await db.query(
+      `SELECT COALESCE(NULLIF(btrim(p.area_type), ''), '') AS area_type,
+              count(*)::int AS count
+       FROM protected_areas p
+       ${where}
+       GROUP BY 1
+       ORDER BY 2 DESC, 1`,
+      params
+    );
+    res.json({ items: rows });
   } catch (err) {
     next(err);
   }

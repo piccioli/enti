@@ -281,6 +281,32 @@ function syncParkTypePanelFromGeojson(fc) {
   renderParkTypePanel(counts);
 }
 
+/** Popola il pannello tipologie EUAP usando l'aggregato API (utile in vista tabellare Parchi
+ *  dove non viene caricato il GeoJSON della mappa). Riusa lo stato `parkTypeChecked`. */
+async function refreshParkTypePanelFromAPI() {
+  if (!parkTypeList) return;
+  try {
+    const params = new URLSearchParams();
+    if (state.reg) params.set('reg', String(state.reg));
+    if (state.prov) params.set('prov', String(state.prov));
+    const url = `/api/protected-areas/types${params.toString() ? `?${params}` : ''}`;
+    const data = await apiFetch(url);
+    const counts = {};
+    (data.items || []).forEach((it) => {
+      const k = it.area_type == null ? '' : String(it.area_type);
+      counts[k] = Number(it.count) || 0;
+    });
+    for (const k of Object.keys(counts)) {
+      if (!Object.prototype.hasOwnProperty.call(state.parkTypeChecked, k)) {
+        state.parkTypeChecked[k] = true;
+      }
+    }
+    renderParkTypePanel(counts);
+  } catch (e) {
+    console.warn('refreshParkTypePanelFromAPI:', e);
+  }
+}
+
 function compareParkTypePanelEntries(a, b) {
   const ka = a[0];
   const kb = b[0];
@@ -711,6 +737,12 @@ async function setView(next) {
     // Lasciando la mappa non serve aggiornare i layer (sono nascosti) — risparmiamo richieste.
   }
 
+  // In vista Parchi tabellare il pannello tipologie deve essere subito popolato
+  // (in vista Mappa il GeoJSON lo riempie già via syncParkTypePanelFromGeojson).
+  if (target === 'parchi') {
+    await refreshParkTypePanelFromAPI();
+  }
+
   await loadMainList();
 }
 
@@ -1086,6 +1118,32 @@ async function loadProtectedAreas() {
   if (state.q) params.set('q', state.q);
   if (chkWithRei && chkWithRei.checked) params.set('with_rei', '1');
 
+  // In vista tabellare Parchi: applica al backend la whitelist delle tipologie EUAP
+  // selezionate nel pannello (solo se almeno una è disattivata).
+  if (state.view === 'parchi') {
+    const keys = Object.keys(state.parkTypeChecked);
+    if (keys.length) {
+      const allOn = keys.every((k) => state.parkTypeChecked[k] !== false);
+      if (!allOn) {
+        const selected = keys
+          .filter((k) => state.parkTypeChecked[k] !== false)
+          .map((k) => (k === '' ? '__empty__' : k));
+        if (selected.length === 0) {
+          // Nessuna tipologia selezionata → tabella vuota, evita anche la fetch.
+          state.total = 0;
+          tbody.innerHTML = '';
+          renderPagination();
+          resultCount.textContent = '0 aree protette';
+          resultHint.textContent = 'Nessuna tipologia selezionata.';
+          emptyState.textContent = 'Nessuna area protetta corrisponde ai filtri (tipologie tutte deselezionate).';
+          emptyState.classList.remove('hidden');
+          return;
+        }
+        params.set('types', selected.join(','));
+      }
+    }
+  }
+
   try {
     const data = await apiFetch(`/api/protected-areas?${params}`);
     state.total = data.total;
@@ -1441,6 +1499,11 @@ selReg.addEventListener('change', async () => {
   }
 
   await refreshAdministrativeAreas();
+  if (state.view === 'parchi') {
+    // In vista tabellare Parchi non passa da refreshAdministrativeAreas →
+    // i conteggi delle tipologie vanno aggiornati esplicitamente per la nuova regione.
+    await refreshParkTypePanelFromAPI();
+  }
   await loadMainList();
 });
 
@@ -1558,6 +1621,10 @@ if (parkTypeList) {
     state.parkTypeChecked[key] = t.checked;
     rebuildProtectedAreasLayer();
     clearParkHighlightIfHidden();
+    if (state.view === 'parchi') {
+      state.page = 0;
+      loadMainList();
+    }
   });
 }
 
@@ -1568,6 +1635,13 @@ if (btnParkTypesAll) {
       syncParkTypePanelFromGeojson(protectedAreasGeoCache);
       rebuildProtectedAreasLayer();
       clearParkHighlightIfHidden();
+    } else if (state.view === 'parchi') {
+      // In vista tabellare la cache GeoJSON può non esistere: ri-fetch dei conteggi.
+      refreshParkTypePanelFromAPI();
+    }
+    if (state.view === 'parchi') {
+      state.page = 0;
+      loadMainList();
     }
   });
 }
